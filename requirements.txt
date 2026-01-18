@@ -1,0 +1,6 @@
+cobra
+numpy
+scipy
+numba
+plotly
+pandas
