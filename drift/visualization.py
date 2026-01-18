@@ -7,7 +7,7 @@ def create_dashboard(all_histories):
     fig = make_subplots(
         rows=3, cols=1, 
         subplot_titles=(
-            "Stochastic Signaling Dynamics (Normalized)", 
+            "Stochastic Signaling Dynamics (Normalized Sample)", 
             "Metabolic Flux Outcome: Growth Rate (h⁻¹)",
             "Systemic Uncertainty Envelope (Phenotypic Response)"
         ),
@@ -16,38 +16,43 @@ def create_dashboard(all_histories):
     
     time = all_histories[0]['time']
     n_sims = len(all_histories)
-    opacity = max(0.1, 1.0 / np.sqrt(n_sims)) if n_sims > 1 else 1.0
+    
+    # Pareto Optimization: Only plot a sample of traces to keep the UI responsive
+    # 80% of value comes from the ensemble stats, not every single noisy line.
+    max_traces = 5
+    sample_indices = np.linspace(0, n_sims - 1, min(n_sims, max_traces), dtype=int)
     
     # Trace Colors
     colors = {'PI3K': '#1f77b4', 'AKT': '#2ca02c', 'mTOR': '#d62728', 'Growth': '#ff7f0e'}
 
-    # 1. Signaling Trajectories
-    for i, hist in enumerate(all_histories):
-        show_leg = (i == 0)
+    # 1. & 2. Sampled Trajectories
+    for i in sample_indices:
+        hist = all_histories[i]
+        show_leg = bool(i == sample_indices[0])
         # PI3K
         fig.add_trace(go.Scatter(
             x=time, y=hist['signaling'][:, 0], mode='lines', 
-            line=dict(color=colors['PI3K']), opacity=opacity, 
-            name='PI3K', legendgroup='sig', showlegend=show_leg
+            line=dict(color=colors['PI3K'], width=1), opacity=0.4, 
+            name='PI3K (Sample)', legendgroup='sig', showlegend=show_leg
         ), row=1, col=1)
         # AKT
         fig.add_trace(go.Scatter(
             x=time, y=hist['signaling'][:, 1], mode='lines', 
-            line=dict(color=colors['AKT']), opacity=opacity, 
-            name='AKT', legendgroup='sig', showlegend=show_leg
+            line=dict(color=colors['AKT'], width=1), opacity=0.4, 
+            name='AKT (Sample)', legendgroup='sig', showlegend=show_leg
         ), row=1, col=1)
         # mTOR
         fig.add_trace(go.Scatter(
             x=time, y=hist['signaling'][:, 2], mode='lines', 
-            line=dict(color=colors['mTOR']), opacity=opacity, 
-            name='mTOR', legendgroup='sig', showlegend=show_leg
+            line=dict(color=colors['mTOR'], width=1), opacity=0.4, 
+            name='mTOR (Sample)', legendgroup='sig', showlegend=show_leg
         ), row=1, col=1)
         
         # 2. Growth Trajectories
         fig.add_trace(go.Scatter(
             x=time, y=hist['growth'], mode='lines', 
-            line=dict(color=colors['Growth']), opacity=opacity, 
-            name='Growth Rate', legendgroup='growth', showlegend=show_leg
+            line=dict(color=colors['Growth'], width=1), opacity=0.4, 
+            name='Growth (Sample)', legendgroup='growth', showlegend=show_leg
         ), row=2, col=1)
 
     # 3. Uncertainty Envelope (Bottom Panel)
@@ -70,21 +75,38 @@ def create_dashboard(all_histories):
     # Mean line
     fig.add_trace(go.Scatter(
         x=time, y=mean_growth, mode='lines', 
-        line=dict(color='black', width=2), 
+        line=dict(color='black', width=3), 
         name='Mean Phenotype'
     ), row=3, col=1)
+
+    # Metadata Annotation for User Context
+    # Extract params from first history (assuming they are consistent or represent the run)
+    inhibition = all_histories[0].get('inhibition', 0) * 100
+    
+    fig.add_annotation(
+        text=f"<b>Run Parameters:</b><br>Inhibition: {inhibition:.1f}%<br>Iterations: {n_sims}",
+        xref="paper", yref="paper",
+        x=1.02, y=0.5,
+        showarrow=False,
+        align="left",
+        bgcolor="white",
+        bordercolor="black",
+        borderwidth=1,
+        borderpad=4
+    )
 
     # Update Axes
     fig.update_xaxes(title_text="Time (arbitrary units)", row=3, col=1)
     fig.update_yaxes(title_text="Normalized Activity", row=1, col=1)
-    fig.update_yaxes(title_text="Objective Value", row=2, col=1)
+    fig.update_yaxes(title_text="Growth Rate", row=2, col=1)
     fig.update_yaxes(title_text="Ensemble Growth Rate", row=3, col=1)
 
     fig.update_layout(
-        height=1000, 
+        height=900, 
         title_text="<b>DRIFT: Multi-Scale Stochastic Research Workbench</b><br>Drug-Target Interaction Propagation (PI3K/AKT/mTOR Axis)",
         template="plotly_white",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(r=150) # Make room for annotation
     )
     
     return fig

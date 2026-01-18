@@ -51,14 +51,14 @@ class DFBASolver:
         Solves FBA with specific constraints.
         constraints: {rxn_id: lower_bound_value}
         """
-        with self.model as m:
-            for rxn_id, lb in constraints.items():
-                if rxn_id in m.reactions:
-                    # For exchange reactions, uptake is usually the lower bound (negative)
-                    m.reactions.get_by_id(rxn_id).lower_bound = lb
-            
-            solution = m.optimize()
-            if solution.status == 'optimal':
-                return solution.objective_value, solution.fluxes.to_dict()
-            else:
-                return 0.0, {}
+        # Directly modify the model instead of using 'with self.model'
+        # This avoids the overhead of context management/copying in tight loops
+        for rxn_id, lb in constraints.items():
+            if rxn_id in self.model.reactions:
+                self.model.reactions.get_by_id(rxn_id).lower_bound = lb
+        
+        solution = self.model.optimize()
+        if solution.status == 'optimal':
+            return solution.objective_value, solution.fluxes.to_dict()
+        else:
+            return 0.0, {}
