@@ -224,7 +224,7 @@ class Workbench:
             rows.append(row)
         return rows
 
-    def run_monte_carlo(self, n_sims=30, steps=100, n_jobs=-1, perturb_params: List[str] = None, export_to: str = None, return_generator: bool = False):  # noqa: C901
+    def run_monte_carlo(self, n_sims=30, steps=100, n_jobs=-1, perturb_params: Optional[List[str]] = None, export_to: Optional[str] = None, return_generator: bool = False):  # noqa: C901
         """
         Runs multiple simulations with perturbed parameters in parallel.
 
@@ -232,8 +232,8 @@ class Workbench:
             n_sims (int): Number of simulations to run
             steps (int): Number of steps per simulation
             n_jobs (int): Number of parallel jobs (-1 for CPU count)
-            perturb_params (List[str]): List of signaling parameter names to perturb.
-            export_to (str, optional): Path to a Parquet file for incremental writing.
+            perturb_params (Optional[List[str]]): List of signaling parameter names to perturb.
+            export_to (Optional[str], optional): Path to a Parquet file for incremental writing.
             return_generator (bool): If True, returns a generator yielding histories one by one.
 
         Returns:
@@ -383,7 +383,7 @@ class Workbench:
         """
         Exports results to a JSON format for broader compatibility (SED-ML like structure).
         """
-        export_data = {
+        export_data: Dict[str, Any] = {
             "metadata": {
                 "model_name": self.model_name,
                 "time_unit": self.time_unit,
