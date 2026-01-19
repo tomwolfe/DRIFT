@@ -42,7 +42,7 @@ class MetabolicBridge:
             self.mappings: List[Dict[str, Any]] = [
                 {
                     "protein_name": "mTOR",
-                    "protein_idx": 2,  # Keep for backward compatibility
+                    "protein_idx": 2,  # Keep for backward compatibility with default 3-species model
                     "reaction_id": "EX_glc__D_e",
                     "influence": "positive",
                     "base_vmax": 10.0,
@@ -66,7 +66,10 @@ class MetabolicBridge:
             return np.array([self._get_global_feedback(fluxes)])
 
         feedback_vec = np.ones(len(self.species_names))
+        
+        # Determine global/energy state
         global_fb = self._get_global_feedback(fluxes)
+        energy_fb = self._get_energy_feedback(fluxes)
 
         # Apply specific reverse mappings
         for rev_map in self.reverse_mappings:
@@ -99,15 +102,19 @@ class MetabolicBridge:
                 else:
                     feedback_vec[idx] = (1.0 - weight) + weight * (1.0 - transformed_val)
 
-        # For mTOR (index 2 in default), if no specific feedback, use global
-        if "mTOR" in self.species_names:
-            idx = self.species_names.index("mTOR")
-            # Only apply global if specific feedback hasn't been set (remains 1.0)
-            if feedback_vec[idx] == 1.0:
-                feedback_vec[idx] = global_fb
-        elif len(feedback_vec) > 2: # Backward compatibility for 3-species model
-            if feedback_vec[2] == 1.0:
-                feedback_vec[2] = global_fb
+        # Apply default biological feedbacks if not explicitly overridden
+        for i, name in enumerate(self.species_names):
+            if feedback_vec[i] == 1.0: # Only if not already set by specific mapping
+                if name == "mTOR":
+                    # mTOR is sensitive to both growth and energy
+                    feedback_vec[i] = 0.5 * global_fb + 0.5 * energy_fb
+                elif name == "AMPK":
+                    # AMPK is activated (high value) when energy is low (low energy_fb)
+                    # So AMPK feedback = 1.0 - energy_fb
+                    feedback_vec[i] = 1.0 - energy_fb
+                elif name in ["PI3K", "AKT"]:
+                    # These might have some mild sensitivity to global state
+                    feedback_vec[i] = 0.8 + 0.2 * global_fb
 
         return feedback_vec
 
@@ -131,10 +138,28 @@ class MetabolicBridge:
                 break
         
         if growth_flux == 0.0 and fluxes:
-            growth_flux = max(fluxes.values()) if fluxes else 0.0
+            # Fallback to any positive biomass-like flux if common names not found
+            growth_flux = max(fluxes.get(k, 0.0) for k in fluxes if "BIOMASS" in k.upper()) if any("BIOMASS" in k.upper() for k in fluxes) else 0.0
 
         feedback = float(np.clip(growth_flux / 0.2, 0.0, 1.0))
         return feedback
+
+    def _get_energy_feedback(self, fluxes: Dict[str, float]) -> float:
+        """Calculates an energy-sensing feedback signal (ATP/ADP ratio proxy)."""
+        if not fluxes:
+            return 1.0
+            
+        # Proxy: Total ATP production flux
+        # In textbook model, ATPS4r is the main ATP synthase
+        atp_flux = fluxes.get("ATPS4r", 0.0)
+        
+        # If not found, look for other ATP-producing reactions
+        if atp_flux == 0.0:
+            atp_flux = sum(f for k, f in fluxes.items() if "ATP" in k and f > 0)
+            
+        # Normalize: textbook ATPS4r is around 2-10 under good growth
+        energy_state = float(np.clip(atp_flux / 5.0, 0.0, 1.0))
+        return energy_state
 
     def get_constraints(self, signaling_state: Union[List[float], np.ndarray]) -> Dict[str, float]:
         """
@@ -298,17 +323,28 @@ class DFBASolver:
             model_name (str): Name of the metabolic model to use
         """
         self.model_name = model_name
-        self._check_solver()
+        self.available_solvers = self._check_solver()
+        
+        # Headless mode: If no solvers, don't attempt to load or validate
+        if not self.available_solvers:
+            logger.warning(f"DFBASolver initialized in HEADLESS mode (no solver found). FBA will be disabled.")
+            self.model = None
+            return
+
         self.model = self._load_model_safe(model_name)
         
         # Pareto: Immediate validation to ensure the model is actually usable.
-        self.validate_model()
+        if self.model:
+            self.validate_model()
 
     def validate_model(self):
         """
         Performs a pre-flight check to ensure the model is viable for DRIFT.
         Checks for solvers, objectives, and basic growth capability.
         """
+        if not self.model:
+            return
+
         logger.info(f"[*] Validating model '{self.model_name}' for DRIFT compatibility...")
         
         # 1. Check for objective
@@ -328,7 +364,7 @@ class DFBASolver:
         logger.info(f"[+] Model '{self.model_name}' validated successfully.")
 
     def _check_solver(self):
-        """Checks if a valid COBRA solver is available and raises a clear error if not."""
+        """Checks if a valid COBRA solver is available and returns a list of them."""
         try:
             from optlang import available_solvers
             active_solvers = [s for s, available in available_solvers.items() if available]
@@ -339,8 +375,9 @@ class DFBASolver:
                     "FBA requires a linear programming solver to function.\n"
                     "Recommended: Install GLPK by running 'pip install swiglpk' or 'conda install glpk'."
                 )
-                logger.critical(error_msg)
-                raise RuntimeError(error_msg)
+                logger.warning(error_msg)
+                # We no longer raise here to allow "headless" operation for signaling-only runs
+                return []
                 
             logger.info(f"Available solvers: {active_solvers}. Using default.")
             return active_solvers
@@ -353,6 +390,10 @@ class DFBASolver:
         Runs the current model with all available solvers and compares results.
         This is critical for ensuring reproducibility across different environments.
         """
+        if not self.model or not self.available_solvers:
+            logger.warning("Solver sensitivity check skipped: No model or solver available.")
+            return {}
+
         import time
         from optlang import available_solvers
         
@@ -409,6 +450,9 @@ class DFBASolver:
         """
         Safely load a metabolic model with fallback options.
         """
+        if not self.available_solvers:
+            return None
+
         try:
             model = load_model(name)
             logger.info(f"Successfully loaded model: {name}")
@@ -447,6 +491,15 @@ class DFBASolver:
         """
         Solves FBA with specific constraints and provides diagnostics on failure.
         """
+        if not self.model:
+            # Headless mode: return a dummy result
+            return {
+                "objective_value": 0.0,
+                "fluxes": {},
+                "status": "headless",
+                "diagnostic": "No solver available (Headless Mode)"
+            }
+
         if not isinstance(constraints, dict):
             raise ValueError(f"constraints must be a dictionary, got {type(constraints)}")
 

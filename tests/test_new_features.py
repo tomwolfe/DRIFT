@@ -104,3 +104,51 @@ def test_reverse_nonlinear_mapping():
     # Low flux (0.0 -> normalized 0.0)
     fb_low = bridge.get_feedback({"EX_glc__D_e": 0.0})
     assert fb_low[m_idx] < 0.01
+
+def test_biological_feedback_rules():
+    """Test the new name-based biological feedback rules (mTOR, AMPK)."""
+    from drift.metabolic import MetabolicBridge
+    
+    # Test mTOR sensitivity to both growth and energy
+    species = ["PI3K", "AKT", "mTOR", "AMPK"]
+    bridge = MetabolicBridge(species_names=species)
+    
+    # CASE A: High growth, high energy
+    # growth_flux=0.2 (max), ATPS4r=5.0 (max)
+    fluxes_high = {"Biomass_Ecoli_core": 0.2, "ATPS4r": 5.0}
+    fb_high = bridge.get_feedback(fluxes_high)
+    
+    # mTOR should be high (~1.0)
+    assert fb_high[2] > 0.9
+    # AMPK should be low (~0.0)
+    assert fb_high[3] < 0.1
+    
+    # CASE B: Low growth, high energy
+    fluxes_low_growth = {"Biomass_Ecoli_core": 0.0, "ATPS4r": 5.0}
+    fb_low_growth = bridge.get_feedback(fluxes_low_growth)
+    # mTOR: 0.5 * global(0) + 0.5 * energy(1) = 0.5
+    assert 0.4 < fb_low_growth[2] < 0.6
+    
+    # CASE C: Low energy
+    fluxes_low_energy = {"Biomass_Ecoli_core": 0.0, "ATPS4r": 0.0}
+    fb_low_energy = bridge.get_feedback(fluxes_low_energy)
+    # mTOR: 0.5 * global(0) + 0.5 * energy(0) = 0.0
+    assert fb_low_energy[2] < 0.1
+    # AMPK: 1.0 - energy(0) = 1.0
+    assert fb_low_energy[3] > 0.9
+
+def test_headless_mode():
+    """Test that DFBASolver works in headless mode without crashing."""
+    from unittest.mock import patch
+    from drift.metabolic import DFBASolver
+    
+    # Mock optlang.available_solvers to return empty dict
+    with patch("optlang.available_solvers", {}):
+        solver = DFBASolver(model_name="textbook")
+        assert solver.model is None
+        
+        # solve_step should return safe default
+        result = solver.solve_step({})
+        assert result["status"] == "headless"
+        assert result["objective_value"] == 0.0
+        assert result["diagnostic"] == "No solver available (Headless Mode)"
