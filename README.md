@@ -31,8 +31,8 @@ In drug discovery, linking a molecular binding event to a systemic outcome (like
 
 ## 🌟 Key Features
 
-- **Multi-Scale Integration:** Seamlessly couples molecular binding, stochastic signaling (SDEs), and dynamic flux balance analysis (dFBA).
-- **Stochastic Dynamics:** Captures cellular heterogeneity using Langevin Dynamics solvers accelerated by **Numba**.
+- **Multi-Scale Integration:** Seamlessly couples molecular binding, stochastic signaling (SDEs), and dynamic flux balance analysis (dFBA). Supports both E. coli core and Human GEMs (e.g., Recon1).
+- **Stochastic Dynamics:** Captures cellular heterogeneity using a high-stability **Milstein scheme** integrator with state-dependent noise, accelerated by **Numba**.
 - **Monte Carlo Uncertainty:** Built-in support for ensemble simulations to assess model robustness and parameter sensitivity.
 - **Interactive Dashboards:** Generates comprehensive HTML reports using **Plotly** for deep-dive analysis of trajectories.
 - **Scientific Validation:** Benchmarked against known biological responses and numerical stability tests.
@@ -141,12 +141,12 @@ If you use DRIFT in your research, please cite it as:
 
 ## 📋 Release Notes
 
-**Latest Release (v0.1.1):**
-- **Repository Hygiene:** Cleaned up root directory bloat; automated dashboard generation scripts.
-- **Model Flexibility:** Refactored signaling engine to support custom drift functions in topologies.
-- **Documentation:** Enhanced contributing guidelines and project structure.
+**Latest Release (v0.1.2):**
+- **Numerical Stability:** Upgraded SDE integrator from Euler-Maruyama to a **Milstein scheme** with state-dependent noise for improved robustness in high-noise scenarios.
+- **Scientific Consistency:** Added explicit support and fallback mechanisms for human metabolic models (e.g., Recon1) and corresponding growth keys.
+- **Dependency Optimization:** Integrated `glpk` and `swiglpk` into environment configurations for seamless FBA solving.
 
-**Previous Release (v0.1.0):**
+**Previous Release (v0.1.1):**
 - Initial public release
 - Multi-scale integration engine
 - Monte Carlo uncertainty quantification

@@ -1,5 +1,6 @@
 cobra
 optlang
+swiglpk
 numpy
 scipy
 numba

@@ -44,12 +44,31 @@ def default_drift_fn(state, params, feedback=1.0):
 @njit
 def langevin_step(state, dt, params, noise_scale, feedback=1.0):
     """
-    One step of Langevin dynamics using the default drift function with feedback.
+    One step of SDE integration using the Milstein scheme for better stability.
+    Uses state-dependent noise to ensure biological plausibility near [0, 1] boundaries.
     """
     drift = default_drift_fn(state, params, feedback=feedback)
+    
+    # Random term
+    dw = np.random.normal(0, 1.0, size=len(state)) * np.sqrt(dt)
+    
+    # State-dependent noise: b(x) = noise_scale * sqrt(x * (1-x))
+    # This naturally vanishes at boundaries, improving stability.
+    # We use a small epsilon to avoid sqrt(0) and division by zero.
+    eps = 1e-6
+    clamped_state = np.zeros_like(state)
+    for i in range(len(state)):
+        clamped_state[i] = max(eps, min(1.0 - eps, state[i]))
+        
+    b = noise_scale * np.sqrt(clamped_state * (1.0 - clamped_state))
+    
+    # Milstein term: 0.5 * b(x) * b'(x) * (dw^2 - dt)
+    # b'(x) = noise_scale * (1 - 2x) / (2 * sqrt(x * (1 - x)))
+    # b(x) * b'(x) = noise_scale^2 * (1 - 2x) / 2
+    milstein_corr = 0.5 * (noise_scale**2) * (1.0 - 2.0 * clamped_state) * (dw**2 - dt)
 
     # Update state
-    new_state = state + drift * dt + np.random.normal(0, noise_scale, size=len(state)) * np.sqrt(dt)
+    new_state = state + drift * dt + b * dw + milstein_corr
 
     # Physical constraints: proteins stay in [0, 1] range (normalized)
     for i in range(len(new_state)):
@@ -63,24 +82,27 @@ def langevin_step(state, dt, params, noise_scale, feedback=1.0):
 
 def create_langevin_integrator(drift_fn):
     """
-    Higher-order function that creates a jitted Langevin integrator step 
+    Higher-order function that creates a jitted Milstein integrator step 
     from a jitted drift function.
-    
-    Args:
-        drift_fn: A function decorated with @njit that takes (state, params, feedback)
-                 and returns the drift vector.
-                 
-    Returns:
-        A jitted function that can be used as jitted_step_fn in a Topology.
     """
     @njit
-    def custom_langevin_step(state, dt, params, noise_scale, feedback=1.0):
+    def custom_milstein_step(state, dt, params, noise_scale, feedback=1.0):
         drift = drift_fn(state, params, feedback=feedback)
         
-        # Update state
-        new_state = state + drift * dt + np.random.normal(0, noise_scale, size=len(state)) * np.sqrt(dt)
+        dw = np.random.normal(0, 1.0, size=len(state)) * np.sqrt(dt)
+        
+        eps = 1e-6
+        clamped_state = np.zeros_like(state)
+        for i in range(len(state)):
+            clamped_state[i] = max(eps, min(1.0 - eps, state[i]))
+            
+        b = noise_scale * np.sqrt(clamped_state * (1.0 - clamped_state))
+        milstein_corr = 0.5 * (noise_scale**2) * (1.0 - 2.0 * clamped_state) * (dw**2 - dt)
 
-        # Physical constraints: proteins stay in [0, 1] range (normalized)
+        # Update state
+        new_state = state + drift * dt + b * dw + milstein_corr
+
+        # Physical constraints: proteins stay in [0, 1] range
         for i in range(len(new_state)):
             if new_state[i] < 0:
                 new_state[i] = 0
@@ -89,7 +111,7 @@ def create_langevin_integrator(drift_fn):
 
         return new_state
         
-    return custom_langevin_step
+    return custom_milstein_step
 
 
 class StochasticIntegrator:

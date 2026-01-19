@@ -22,7 +22,9 @@ class SimulationConfig:
     noise_scale: float = 0.03  # Noise scale for stochastic integrator
 
     # Model parameters
-    model_name: str = "textbook"  # Metabolic model name
+    model_name: str = "textbook"  # Metabolic model name (e.g., 'textbook', 'recon1', 'iJO1366')
+    # Note: 'textbook' (E. coli core) is used as default for performance in demos.
+    # For human drug response, 'recon1' or other human GEMs are recommended for consistency.
 
     # Multiprocessing
     n_jobs: int = -1  # Number of parallel jobs (-1 for CPU count)

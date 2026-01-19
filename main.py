@@ -109,7 +109,11 @@ def parse_args():
     parser.add_argument(
         "--mc-iterations", type=int, help="Number of Monte Carlo iterations"
     )
-    parser.add_argument("--model-name", type=str, help="Metabolic model name")
+    parser.add_argument(
+        "--model-name", 
+        type=str, 
+        help="Metabolic model name (e.g., 'textbook', 'recon1', 'iJO1366')"
+    )
     parser.add_argument(
         "--output", type=str, default="drift_dashboard.html", help="Output file name"
     )

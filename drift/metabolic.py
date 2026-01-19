@@ -63,7 +63,14 @@ class MetabolicBridge:
             return 1.0  # Default to full activity if no fluxes provided
             
         # Try to find a growth-related flux
-        growth_keys = ["Biomass_Ecoli_core", "BIOMASS_Ecoli_core_w_GAM", "growth"]
+        growth_keys = [
+            "Biomass_Ecoli_core", 
+            "BIOMASS_Ecoli_core_w_GAM", 
+            "growth", 
+            "BIOMASS_RECON1", 
+            "BIOMASS_reaction",
+            "BIOMASS_maintenance"
+        ]
         growth_flux = 0.0
         for key in growth_keys:
             if key in fluxes:
@@ -237,12 +244,7 @@ class DFBASolver:
     def _load_model_safe(self, name):
         """
         Safely load a metabolic model with fallback options.
-
-        Args:
-            name (str): Name of the model to load
-
-        Returns:
-            cobra.Model: Loaded metabolic model
+        Supports 'textbook' (E. coli), 'iJO1366', and human models like 'recon1'.
         """
         # First try the requested model
         try:
@@ -255,7 +257,8 @@ class DFBASolver:
             )
 
             # Try common model names as fallbacks
-            fallback_models = ["e_coli_core", "textbook"]
+            # 'textbook' is the most reliable small model
+            fallback_models = ["textbook", "e_coli_core", "iJO1366", "recon1"]
             if name in fallback_models:
                 fallback_models.remove(name)  # Don't retry the same failed name
 
