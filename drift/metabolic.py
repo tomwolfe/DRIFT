@@ -10,15 +10,14 @@ logger = logging.getLogger(__name__)
 class MetabolicBridge:
     """Maps signaling protein concentrations to metabolic Vmax constraints."""
 
-    def __init__(self, mappings: Optional[List[Dict[str, Any]]] = None):
+    def __init__(self, mappings: Optional[List[Dict[str, Any]]] = None, reverse_mappings: Optional[List[Dict[str, Any]]] = None):
         """
         Initialize the MetabolicBridge.
 
         Args:
             mappings: List of dicts specifying how signaling affects metabolism.
-                     Example: [
-                         {'protein_idx': 2, 'reaction_id': 'EX_glc__D_e', 'influence': 'positive', 'base_vmax': 10.0}
-                     ]
+            reverse_mappings: List of dicts specifying how metabolism affects signaling.
+                             Example: [{'reaction_id': 'ATPS4r', 'target_protein_idx': 2, 'threshold': 0.1}]
         """
         if mappings is None:
             # Default: mTOR (idx 2) increases glucose uptake capacity
@@ -32,6 +31,32 @@ class MetabolicBridge:
             ]
         else:
             self.mappings = mappings
+        
+        self.reverse_mappings = reverse_mappings or []
+
+    def get_feedback(self, fluxes: Dict[str, float]) -> float:
+        """
+        Calculates a global feedback signal based on metabolic state.
+        By default, it uses the growth rate (objective) normalized to a typical value.
+        """
+        if not fluxes:
+            return 1.0  # Default to full activity if no fluxes provided
+            
+        # Try to find a growth-related flux
+        growth_keys = ["Biomass_Ecoli_core", "BIOMASS_Ecoli_core_w_GAM", "growth"]
+        growth_flux = 0.0
+        for key in growth_keys:
+            if key in fluxes:
+                growth_flux = fluxes[key]
+                break
+        
+        if growth_flux == 0.0 and fluxes:
+            # If no explicit growth key, use the max flux as a proxy for activity
+            growth_flux = max(fluxes.values()) if fluxes else 0.0
+
+        # Normalize: 0.2 is a typical max growth for core models
+        feedback = float(np.clip(growth_flux / 0.2, 0.0, 1.0))
+        return feedback
 
     def get_constraints(self, signaling_state: Union[List[float], np.ndarray]) -> Dict[str, float]:
         """
@@ -199,13 +224,16 @@ class DFBASolver:
 
         try:
             solution = self.model.optimize()
-            if solution.status == "optimal":
-                return solution.objective_value, solution.fluxes.to_dict()
-            else:
-                logger.warning(
-                    f"FBA optimization returned non-optimal status: {solution.status}"
-                )
-                return 0.0, {}
+            return {
+                "objective_value": solution.objective_value if solution.status == "optimal" else 0.0,
+                "fluxes": solution.fluxes.to_dict() if solution.status == "optimal" else {},
+                "status": solution.status
+            }
         except Exception as e:
             logger.error(f"FBA optimization failed: {e}")
-            return 0.0, {}
+            return {
+                "objective_value": 0.0,
+                "fluxes": {},
+                "status": "failed",
+                "error": str(e)
+            }

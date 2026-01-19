@@ -133,9 +133,9 @@ class TestMetabolic(unittest.TestCase):
 
     def test_solver_optimize(self):
         solver = DFBASolver(model_name="textbook")
-        growth, fluxes = solver.solve_step({"EX_glc__D_e": -10.0})
-        self.assertGreater(growth, 0)
-        self.assertIn("EX_glc__D_e", fluxes)
+        result = solver.solve_step({"EX_glc__D_e": -10.0})
+        self.assertGreater(result["objective_value"], 0)
+        self.assertIn("EX_glc__D_e", result["fluxes"])
 
     def test_solver_invalid_constraints(self):
         """Test that invalid constraints raise errors."""

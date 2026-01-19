@@ -6,11 +6,12 @@ from .topology import Topology, get_default_topology
 
 
 @njit
-def default_drift_fn(state, params):
+def default_drift_fn(state, params, feedback=1.0):
     """
-    Default drift function for PI3K/AKT/mTOR.
+    Default drift function for PI3K/AKT/mTOR with metabolic feedback.
     state: [PI3K, AKT, mTOR]
     params: [k_pi3k_base, k_pi3k_deg, k_akt_act, k_akt_deact, k_mtor_act, k_mtor_deact, inhibition]
+    feedback: Metabolic feedback signal (0-1), affects mTOR activation.
     """
     pi3k, akt, mtor = state
     (
@@ -32,18 +33,20 @@ def default_drift_fn(state, params):
     # AKT dynamics (activated by PI3K)
     dakt = k_akt_act * effective_pi3k * (1.0 - akt) - k_akt_deact * akt
 
-    # mTOR dynamics (activated by AKT)
-    dmtor = k_mtor_act * akt * (1.0 - mtor) - k_mtor_deact * mtor
+    # mTOR dynamics (activated by AKT, modulated by metabolic feedback)
+    # Feedback acts as a required co-factor for mTOR activation (simulating AMPK/energy sensor)
+    effective_mtor_act = k_mtor_act * feedback
+    dmtor = effective_mtor_act * akt * (1.0 - mtor) - k_mtor_deact * mtor
 
     return np.array([dpi3k, dakt, dmtor])
 
 
 @njit
-def langevin_step(state, dt, params, noise_scale):
+def langevin_step(state, dt, params, noise_scale, feedback=1.0):
     """
-    One step of Langevin dynamics using the default drift function.
+    One step of Langevin dynamics using the default drift function with feedback.
     """
-    drift = default_drift_fn(state, params)
+    drift = default_drift_fn(state, params, feedback=feedback)
 
     # Update state
     new_state = state + drift * dt + np.random.normal(0, noise_scale, size=len(state)) * np.sqrt(dt)
@@ -82,49 +85,56 @@ class StochasticIntegrator:
         # Default kinetic parameters
         self.base_params = np.array(list(self.topology.parameters.values()))
 
-    def step(self, state, inhibition):
+    def step(self, state, inhibition, feedback=1.0):
         """
-        Perform one integration step.
+        Perform one integration step with optional metabolic feedback.
         """
         if not isinstance(state, np.ndarray) or state.shape != (len(self.topology.species),):
             raise ValueError(
                 f"state must be a numpy array of shape ({len(self.topology.species)},), got {type(state)} with shape {getattr(state, 'shape', 'N/A')}"
             )
 
-        # Validate inhibition parameter
+        # Validate inhibition and feedback parameters
         if not (0 <= inhibition <= 1):
             raise ValueError(
                 f"inhibition must be between 0 and 1, got {inhibition}"
             )
+        
+        feedback = float(feedback)
 
         # Performance optimization: if using default topology, use jitted function
         if self.topology.name == "PI3K_AKT_mTOR":
             params = np.concatenate((self.base_params, [inhibition]))
-            return langevin_step(state, self.dt, params, self.noise_scale)
+            return langevin_step(state, self.dt, params, self.noise_scale, feedback=feedback)
 
         # Custom topology with provided drift_fn
         if self.topology.drift_fn is not None:
-            return self._custom_step(state, inhibition)
+            return self._custom_step(state, inhibition, feedback=feedback)
 
         # Fallback to generic decay
-        return self._generic_step(state, inhibition)
+        return self._generic_step(state, inhibition, feedback=feedback)
 
-    def _custom_step(self, state, inhibition):
+    def _custom_step(self, state, inhibition, feedback=1.0):
         """Step using a custom drift function provided in the topology."""
         if self.topology.drift_fn is None:
             # Fallback if drift_fn is None
-            return self._generic_step(state, inhibition)
+            return self._generic_step(state, inhibition, feedback=feedback)
 
-        drift = self.topology.drift_fn(state, self.topology.parameters, inhibition)
+        # Custom drift functions should now ideally accept feedback as well
+        # We try to pass it if possible, otherwise we ignore it for backward compatibility
+        try:
+            drift = self.topology.drift_fn(state, self.topology.parameters, inhibition, feedback=feedback)
+        except TypeError:
+            drift = self.topology.drift_fn(state, self.topology.parameters, inhibition)
+
         diffusion = np.random.normal(0, self.noise_scale, size=len(state)) * np.sqrt(self.dt)
         new_state = state + drift * self.dt + diffusion
         return np.clip(new_state, 0, 1)
 
-    def _generic_step(self, state, inhibition):
+    def _generic_step(self, state, inhibition, feedback=1.0):
         """Generic Euler-Maruyama step for unknown topologies."""
-        # Fallback: very simple decay-to-zero drift
-        # If inhibited_species is set, apply inhibition to that species
-        drift = -0.1 * state
+        # Fallback: very simple decay-to-zero drift modulated by feedback
+        drift = -0.1 * state * (2.0 - feedback)  # Lower feedback increases decay
         
         # Apply inhibition if topology specifies an inhibited species
         inhibited_species = getattr(self.topology, "inhibited_species", None)

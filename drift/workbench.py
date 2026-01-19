@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 from .binding import BindingEngine
 from .signaling import StochasticIntegrator
 from .metabolic import MetabolicBridge, DFBASolver
@@ -7,7 +8,7 @@ from concurrent.futures import ProcessPoolExecutor
 import os
 import logging
 from tqdm import tqdm
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -50,6 +51,7 @@ def _single_sim_wrapper(args):
         
         # Initial state from topology
         state = integrator.topology.get_initial_state()
+        feedback = 1.0  # Initial feedback (healthy state)
 
         history = {
             "time": np.arange(steps) * integrator.dt,
@@ -60,9 +62,19 @@ def _single_sim_wrapper(args):
         }
 
         for step in range(steps):
-            state = integrator.step(state, inhibition)
+            # 1. Signaling step (influenced by previous metabolic feedback)
+            state = integrator.step(state, inhibition, feedback=feedback)
+            
+            # 2. Metabolic mapping (Signaling -> Metabolism)
             constraints = bridge.get_constraints(state)
-            growth, _ = solver.solve_step(constraints)
+            
+            # 3. FBA solver
+            fba_result = solver.solve_step(constraints)
+            growth = fba_result["objective_value"]
+            fluxes = fba_result["fluxes"]
+
+            # 4. Feedback mapping (Metabolism -> Signaling)
+            feedback = bridge.get_feedback(fluxes)
 
             history["signaling"].append(state.copy())
             history["growth"].append(growth)
@@ -201,3 +213,39 @@ class Workbench:
                     all_histories.append(_single_sim_wrapper(args))
 
         return {"histories": all_histories, "basal_growth": basal_growth}
+
+    def export_results(self, results: Dict[str, Any], file_path: str):
+        """
+        Exports Monte Carlo results to a structured Parquet file.
+
+        Args:
+            results (dict): Output from run_monte_carlo
+            file_path (str): Destination path (.parquet)
+        """
+        all_data = []
+        histories = results.get("histories", [])
+        species_names = self.topology.species if self.topology else ["PI3K", "AKT", "mTOR"]
+
+        for sim_idx, hist in enumerate(histories):
+            for step_idx in range(len(hist["time"])):
+                row = {
+                    "sim_id": sim_idx,
+                    "step": step_idx,
+                    "time": hist["time"][step_idx],
+                    "growth": hist["growth"][step_idx],
+                    "drug_kd": hist["drug_kd"],
+                    "inhibition": hist.get("inhibition", 0.0),
+                }
+                # Add signaling species
+                for i, species in enumerate(species_names):
+                    row[species] = hist["signaling"][step_idx, i]
+                
+                all_data.append(row)
+
+        df = pd.DataFrame(all_data)
+        
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
+        
+        df.to_parquet(file_path, index=False)
+        logger.info(f"Successfully exported {len(all_data)} rows to {file_path}")
