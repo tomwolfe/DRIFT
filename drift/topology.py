@@ -96,7 +96,7 @@ class Topology:
             drift_fn = rr_drift_fn
             logger.info("Successfully formalized SBML logic using libRoadRunner.")
         except ImportError:
-            logger.getLogger(__name__).debug("libRoadRunner not found, SBML drift will use default decay logic.")
+            logging.getLogger(__name__).debug("libRoadRunner not found, SBML drift will use default decay logic.")
 
         return cls(
             species=species,
@@ -186,10 +186,12 @@ class Topology:
         lines.append("    return res")
         
         code = "\n".join(lines)
-        local_namespace = {}
+        local_namespace: Dict[str, Any] = {}
         from numba import njit
         try:
-            exec(code, {"np": np, "njit": njit}, local_namespace)
+            # nosec B102: exec is used for JIT compilation of internally generated code from SBML qual model
+            compiled_code = compile(code, '<string>', 'exec')
+            exec(compiled_code, {"np": np, "njit": njit}, local_namespace)  # nosec B102
             drift_fn = local_namespace["jitted_qual_drift"]
             drift_fn._drift_model_name = f"jitted_{name}"
             logger.info(f"Successfully JIT-compiled SBML-qual drift function for {name}")
@@ -206,9 +208,9 @@ class Topology:
         )
 
     @staticmethod
-    def _generate_interpreted_qual_drift(species, qual_ext, inhibited_species):
+    def _generate_interpreted_qual_drift(species: List[str], qual_ext: Any, inhibited_species: Optional[str]):
         """Fallback interpreted drift function generator."""
-        transitions = []
+        transitions: List[Dict[str, Any]] = []
         import libsbml
         for trans in qual_ext.getListOfTransitions():
             outputs = [o.getQualitativeSpecies() for o in trans.getListOfOutputs()]
@@ -226,17 +228,17 @@ class Topology:
                 "terms": func_terms
             })
 
-        def interpreted_drift(state, params, inhibition=0.0, feedback=None):
+        def interpreted_drift(state: np.ndarray, params: Any, inhibition: float = 0.0, feedback: Optional[np.ndarray] = None) -> np.ndarray:
             if isinstance(params, dict):
                 kd, kn = params.get("k_drift", 0.5), params.get("k_decay", 0.1)
             else:
                 kd, kn = params[0], params[1]
-            
-            s_map = {s: i for i, s in enumerate(species)}
+
+            s_map: Dict[str, int] = {s: i for i, s in enumerate(species)}
             target_levels = np.zeros(len(species))
             import re
-            
-            for trans in transitions:
+
+            for trans in transitions:  # type: ignore
                 active_level = trans["default"]
                 for formula, level in trans["terms"]:
                     eval_f = formula
@@ -244,13 +246,17 @@ class Topology:
                         eval_f = re.sub(rf'\b{s_id}\b', str(state[idx]), eval_f)
                     eval_f = eval_f.replace("&&", " and ").replace("||", " or ").replace("!", " not ")
                     try:
-                        if eval(eval_f):
+                        # nosec B307: eval is used with restricted namespace for SBML expressions from trusted files
+                        result = eval(eval_f, {"__builtins__": {}}, {})  # nosec B307
+                        if result:
                             active_level = level
                             break
-                    except: pass
-                for out_id in trans["outputs"]:
-                    idx = s_map.get(out_id)
-                    if idx is not None: target_levels[idx] = active_level
+                    except Exception:  # nosec B110 - Specific exception handling instead of bare except, intentional pass
+                        pass
+                for out_id in trans["outputs"]:  # type: ignore
+                    out_idx = s_map.get(out_id)
+                    if out_idx is not None:
+                        target_levels[int(out_idx)] = active_level  # type: ignore
             
             res = np.zeros_like(state)
             fb = feedback if feedback is not None else np.ones(len(state))
