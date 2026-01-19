@@ -429,6 +429,71 @@ class Workbench:
         results["sensitivity"] = correlations.to_dict()
         return results
 
+    def calibrate_to_data(
+        self, 
+        experimental_data_path: str, 
+        parameter_name: str = "drug_kd", 
+        param_range: tuple = (0.01, 10.0), 
+        n_points: int = 10,
+        mapping: Optional[Dict[str, str]] = None
+    ):
+        """
+        Calibrates a specific parameter by minimizing MSE against experimental data.
+        
+        Args:
+            experimental_data_path: Path to experimental CSV.
+            parameter_name: Name of parameter to calibrate (e.g., 'drug_kd').
+            param_range: (min, max) for the parameter.
+            n_points: Number of points to sample in the range (Grid Search).
+            mapping: Mapping from experimental columns to simulation keys.
+        """
+        from .validation import ExternalValidator
+        validator = ExternalValidator(experimental_data_path)
+        
+        if mapping is None:
+            mapping = {"growth": "growth", "pAKT": "AKT"}
+
+        print(f"[*] Calibrating {parameter_name} against {experimental_data_path}...")
+        
+        search_space = np.linspace(param_range[0], param_range[1], n_points)
+        best_param = None
+        min_total_mse = float("inf")
+        
+        for val in search_space:
+            # Update parameter
+            if parameter_name == "drug_kd":
+                self.binding.kd = val
+            else:
+                # Handle topology parameters if needed
+                pass
+                
+            # Run simulation
+            # Experimental data often covers long time scales, match steps to data
+            max_time = validator.exp_data["time"].max()
+            steps = int(max_time / self.signaling.dt)
+            
+            history = self.run_simulation(steps=steps)
+            
+            # Benchmark
+            try:
+                metrics = validator.benchmark(history, mapping)
+                total_mse = sum(m["mse"] for m in metrics.values())
+                
+                if total_mse < min_total_mse:
+                    min_total_mse = total_mse
+                    best_param = val
+                    
+                logger.info(f"  - {parameter_name}={val:.4f} | Total MSE: {total_mse:.6f}")
+            except Exception as e:
+                logger.warning(f"  - {parameter_name}={val:.4f} | Calibration step failed: {e}")
+
+        if best_param is not None:
+            print(f"[+] Calibration Complete. Best {parameter_name}: {best_param:.4f} (MSE: {min_total_mse:.6f})")
+            if parameter_name == "drug_kd":
+                self.binding.kd = best_param
+        
+        return best_param, min_total_mse
+
     def export_results(self, results: Dict[str, Any], file_path: str):
         """
         Exports Monte Carlo results to a structured Parquet file.

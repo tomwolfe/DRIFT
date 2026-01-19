@@ -504,7 +504,7 @@ class DFBASolver:
         self.available_solvers = self._check_solver()
         self.headless = not self.available_solvers
         
-        # Headless mode: If no solvers, don't attempt to load or validate
+        # Headless mode: If no solvers, use the proxy engine
         if self.headless:
             if self.strict:
                 raise RuntimeError(
@@ -514,12 +514,17 @@ class DFBASolver:
             
             print("\n" + "!"*80)
             print("!!! WARNING: DFBASolver is running in HEADLESS MODE (No LP Solver found) !!!")
-            print("!!! Metabolic FBA will be DISABLED. Signaling will run WITHOUT metabolic feedback. !!!")
+            print("!!! Metabolic FBA will be PROXIED. Results will be qualitatively similar but NOT exact. !!!")
             print("!!! To fix this, install a solver: pip install swiglpk")
             print("!"*80 + "\n")
             
-            logger.warning("DFBASolver initialized in HEADLESS mode (no solver found). FBA will be disabled.")
+            logger.warning("DFBASolver initialized in HEADLESS mode (no solver found). FBA will be proxied.")
             self.model = None
+            # Default proxy parameters for textbook-like behavior
+            self.proxy_params = {
+                "base_growth": 0.2,
+                "yield_coefficient": 0.02  # growth / uptake
+            }
             return
 
         self.model = self._load_model_safe(model_name)
@@ -527,6 +532,37 @@ class DFBASolver:
         # Pareto: Immediate validation to ensure the model is actually usable.
         if self.model:
             self.validate_model()
+
+    def _solve_proxy(self, constraints):
+        """
+        Algebraic proxy for FBA when no solver is available.
+        Mimics growth based on the most limiting uptake constraint.
+        """
+        # In FBA, growth is limited by the substrate uptake (e.g., Glucose)
+        # uptake_flux = -lower_bound (since lower bound is negative for uptake)
+        uptake_fluxes = [-lb for lb in constraints.values() if lb < 0]
+        
+        if not uptake_fluxes:
+            growth = self.proxy_params["base_growth"]
+        else:
+            # Growth is limited by the most restrictive uptake
+            # For textbook model, Glucose uptake of 10 gives growth ~0.2
+            min_uptake = min(uptake_fluxes)
+            growth = min_uptake * self.proxy_params["yield_coefficient"]
+
+        # Simulate some basic fluxes for feedback
+        fluxes = {k: -lb for k, lb in constraints.items()}
+        fluxes["growth"] = growth
+        fluxes["biomass"] = growth
+        # Energy proxy: proportional to growth
+        fluxes["ATPS4r"] = growth * 25.0 
+
+        return {
+            "objective_value": growth,
+            "fluxes": fluxes,
+            "status": "proxied",
+            "diagnostic": "FBA results approximated via algebraic proxy"
+        }
 
     def validate_model(self):
         """
@@ -685,13 +721,8 @@ class DFBASolver:
         if not self.model:
             if self.strict:
                 raise RuntimeError("DFBASolver: Attempted to solve FBA in strict mode with no available solver.")
-            # Headless mode: return a dummy result
-            return {
-                "objective_value": 0.0,
-                "fluxes": {},
-                "status": "headless",
-                "diagnostic": "No solver available (Headless Mode)"
-            }
+            # Headless mode: return proxied result
+            return self._solve_proxy(constraints)
 
         if not isinstance(constraints, dict):
             raise ValueError(f"constraints must be a dictionary, got {type(constraints)}")
