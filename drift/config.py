@@ -84,4 +84,4 @@ class SimulationConfig:
 
     def get_dashboard_filename(self) -> str:
         """Generate a descriptive filename based on parameters."""
-        return f"drift_kd{self.drug_kd}_c{self.drug_concentration}_{self.model_name}.html"
+        return f"outputs/drift_kd{self.drug_kd}_c{self.drug_concentration}_{self.model_name}.html"

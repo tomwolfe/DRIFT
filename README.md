@@ -88,10 +88,14 @@ pytest tests/
 
 # Run tests with coverage
 pytest tests/ --cov=drift --cov-report=html
-
-# Run specific test file
-pytest tests/test_workbench.py
 ```
+
+### Dashboard Generation
+To generate a sample dashboard and verify the workbench visualization:
+```bash
+python scripts/generate_sample_dashboard.py
+```
+Generated reports are saved in the `outputs/` directory (ignored by git).
 
 ### Current Test Coverage
 - **Core Modules:** 85%+ line coverage
@@ -137,13 +141,16 @@ If you use DRIFT in your research, please cite it as:
 
 ## 📋 Release Notes
 
-**Latest Release (v0.1.0):**
+**Latest Release (v0.1.1):**
+- **Repository Hygiene:** Cleaned up root directory bloat; automated dashboard generation scripts.
+- **Model Flexibility:** Refactored signaling engine to support custom drift functions in topologies.
+- **Documentation:** Enhanced contributing guidelines and project structure.
+
+**Previous Release (v0.1.0):**
 - Initial public release
 - Multi-scale integration engine
 - Monte Carlo uncertainty quantification
 - Interactive visualization dashboard
-
-For a complete history of changes, see our [Changelog](CHANGELOG.md).
 
 ## 🚀 Release Process
 

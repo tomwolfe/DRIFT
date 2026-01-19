@@ -2,25 +2,18 @@
 
 All notable changes to the DRIFT project will be documented in this file.
 
-## [Unreleased]
+## [0.1.1] - 2026-01-18
 
 ### Added
-- Comprehensive API reference documentation
-- Expanded tutorial with advanced usage examples
-- Scientific validation examples and benchmarks
-- Comparison with existing tools documentation
-- Additional example workflows
-- Enhanced test coverage with visualization tests
-- CI/CD pipeline with automated testing
-- Documentation deployment workflow
-- Release automation workflow
-- Contribution guidelines
+- Dedicated `outputs/` directory for simulation results.
+- `scripts/generate_sample_dashboard.py` for reproducible visualization generation.
+- Support for custom drift functions in `Topology` and `StochasticIntegrator`.
+- Comprehensive `.gitignore` to maintain repository hygiene.
 
 ### Changed
-- Improved README with benchmarks and validation results
-- Enhanced error handling and validation
-- Better command-line interface options
-- Updated documentation structure
+- Moved generated HTML dashboards out of the root directory.
+- Refactored `StochasticIntegrator` to be more generic and extensible.
+- Enhanced `CONTRIBUTING.md` with more detailed development guidelines.
 
 ## [0.1.0] - 2024-01-18
 

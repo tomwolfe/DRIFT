@@ -81,7 +81,7 @@ def main(config: SimulationConfig = None):
         fig.write_html(output_file)
 
         # Also update a 'latest' symlink or copy for convenience
-        latest_file = "drift_dashboard_latest.html"
+        latest_file = "outputs/drift_dashboard_latest.html"
         fig.write_html(latest_file)
 
         print("[SUCCESS] Simulation complete.")
