@@ -446,10 +446,10 @@ class Workbench:
 
         return {"histories": all_histories, "basal_growth": basal_growth}
 
-    def run_global_sensitivity_analysis(self, n_sims=50, steps=100, n_jobs=-1):
+    def run_global_sensitivity_analysis(self, n_sims=100, steps=100, n_jobs=-1):
         """
         Performs Global Sensitivity Analysis (GSA) to identify drivers of metabolic drift.
-        Perturbs all signaling parameters and K_d, then calculates correlations with growth.
+        Uses both Spearman correlation and Sobol-inspired Variance Decomposition (S1).
         """
         print(f"[*] Starting Global Sensitivity Analysis (N={n_sims})...")
         
@@ -458,70 +458,86 @@ class Workbench:
         eff_topology = self.topology or get_default_topology()
         params_to_perturb = list(eff_topology.parameters.keys())
         
+        # We need more simulations for Sobol than for simple correlation
+        if n_sims < len(params_to_perturb) * 2:
+            logger.warning(f"N={n_sims} may be too low for robust Sobol indices. Recommended: >{len(params_to_perturb)*10}")
+
         results = self.run_monte_carlo(n_sims=n_sims, steps=steps, n_jobs=n_jobs, perturb_params=params_to_perturb)
 
-        # Calculate sensitivity indices (Pearson correlation with final growth)
+        # 1. Collect Data
         data = []
         if isinstance(results, dict) and "histories" in results:
-            # Results is a dictionary with histories
-            for h in results["histories"]:
-                row = {"growth": np.mean(h["growth"]), "drug_kd": h["drug_kd"]}
+            histories = results["histories"]
+        else:
+            histories = list(results) # Generator
+
+        for h in histories:
+            if isinstance(h, dict):
+                # Calculate aggregate metrics for sensitivity
+                avg_growth = np.mean(h["growth"])
+                # We also look at "drift" (instability)
+                growth_cv = np.std(h["growth"]) / (avg_growth + 1e-6)
+                
+                row = {
+                    "growth": avg_growth, 
+                    "instability": growth_cv,
+                    "drug_kd": h["drug_kd"]
+                }
                 row.update(h["params"])
                 data.append(row)
-        else:
-            # Results is a generator, convert to list
-            histories_list = list(results)
-            for h in histories_list:
-                if isinstance(h, dict):
-                    row = {"growth": np.mean(h["growth"]), "drug_kd": h["drug_kd"]}
-                    row.update(h["params"])
-                    data.append(row)
         
         df = pd.DataFrame(data)
+        
+        # 2. Linear/Monotonic Sensitivity (Spearman)
         correlation_matrix = df.corr(method="spearman")
-        growth_corr = correlation_matrix["growth"]
-        # Remove the "growth" entry from correlations to avoid self-correlation
-        # Convert to dict and remove 'growth' key, then back to series
-        growth_corr_dict = growth_corr.to_dict()
-        growth_corr_dict.pop("growth", None)  # Remove 'growth' key if it exists
-        correlations = pd.Series(growth_corr_dict).sort_values(ascending=False)
+        growth_corr = correlation_matrix["growth"].drop("growth", errors="ignore")
+        correlations = growth_corr.sort_values(ascending=False)
 
-        print("\n[+] Sensitivity Analysis Results (Spearman Correlation with Growth):")
+        print("\n[+] Monotonic Sensitivity (Spearman Correlation with Growth):")
         for param, corr in correlations.items():
-            print(f"    - {param:20}: {corr: .4f}")
+            if param in params_to_perturb or param == "drug_kd":
+                print(f"    - {param:20}: {corr: .4f}")
 
-        # Pareto: Variance-based Sensitivity (Simplified Sobol)
-        # We calculate the "First-order" effect by looking at how much the mean growth
-        # changes across quantiles of the parameter.
-        variance_indices = {}
+        # 3. Variance-based Sensitivity (Sobol S1)
+        # S1 = Var(E[Y|Xi]) / Var(Y)
+        sobol_s1 = {}
         total_var = df["growth"].var()
-        if total_var is not None and total_var > 0:
+        
+        if total_var > 1e-9:
             for param in params_to_perturb + ["drug_kd"]:
                 if param in df.columns:
-                    # Group by quartiles and calculate variance of means
-                    df["quartile"] = pd.qcut(df[param], 4, labels=False, duplicates='drop')
-                    group_means = df.groupby("quartile")["growth"].mean()
-                    if len(group_means) > 1:
-                        var_of_means = group_means.var()
-                        if total_var != 0:
-                            variance_indices[param] = var_of_means / total_var
-                        else:
-                            variance_indices[param] = 0.0  # If no variance in growth, sensitivity is 0
+                    # Use binning to estimate E[Y|Xi]
+                    # Pareto: 10 bins or sqrt(N) for better estimation
+                    n_bins = int(np.sqrt(len(df)))
+                    if n_bins < 2: n_bins = 2
+                    if n_bins > 10: n_bins = 10
+                    
+                    try:
+                        df["bin"] = pd.qcut(df[param], n_bins, labels=False, duplicates='drop')
+                        conditional_means = df.groupby("bin")["growth"].mean()
+                        if len(conditional_means) > 1:
+                            var_of_means = conditional_means.var()
+                            sobol_s1[param] = var_of_means / total_var
+                    except Exception as e:
+                        logger.debug(f"Sobol estimation failed for {param}: {e}")
 
-            print("\n[+] Variance-based Sensitivity Indices (Approx. Sobol S1):")
-            # Sort by impact
-            sorted_vsi = sorted(variance_indices.items(), key=lambda x: x[1], reverse=True)
-            for param, s1 in sorted_vsi:
+            print("\n[+] Variance-based Sensitivity (Sobol S1 Indices):")
+            sorted_s1 = sorted(sobol_s1.items(), key=lambda x: x[1], reverse=True)
+            for param, s1 in sorted_s1:
                 print(f"    - {param:20}: {s1:.4f}")
 
-        # Create a new results dictionary for return
-        gsa_results = {
-            "sensitivity": correlations.to_dict()
-        }
-        if variance_indices:
-            gsa_results["sensitivity_variance"] = variance_indices
+        # 4. Interaction Detection (Total Effect vs First Order)
+        # If sum(S1) < 1.0 significantly, it suggests strong interactions (S2, S3...)
+        sum_s1 = sum(sobol_s1.values())
+        if sum_s1 < 0.7:
+             print(f"\n[!] High Interaction Detected: Sum(S1) = {sum_s1:.2f}")
+             print("    Metabolic drift is driven by non-linear parameter couplings.")
 
-        return gsa_results
+        return {
+            "spearman": correlations.to_dict(),
+            "sobol_s1": sobol_s1,
+            "sum_s1": sum_s1
+        }
 
     def calibrate_to_data(
         self, 
