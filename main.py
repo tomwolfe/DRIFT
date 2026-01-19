@@ -30,21 +30,13 @@ def main(config: SimulationConfig = None):
     print(f"[*] Target Model: {config.model_name}")
 
     try:
-        # Pareto: Pre-flight check. Validate model loading BEFORE starting simulations.
-        # This saves users from waiting for MC setup if the model name is wrong.
-        print(f"[*] Pre-flight: Validating metabolic model '{config.model_name}'...")
-        from drift.metabolic import DFBASolver
-        _ = DFBASolver(model_name=config.model_name)
-        print("[+] Model validated.")
-
-        # Initialize Workbench
+        # Initialize Workbench (Internal DFBASolver now handles pre-flight validation)
         workbench = Workbench(
             drug_kd=config.drug_kd,
             drug_concentration=config.drug_concentration,
             model_name=config.model_name,
         )
 
-        print(f"[*] Running {config.mc_iterations} Monte Carlo simulations (Steps={config.sim_steps})...")
         results = workbench.run_monte_carlo(
             n_sims=config.mc_iterations, steps=config.sim_steps, n_jobs=config.n_jobs
         )

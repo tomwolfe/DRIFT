@@ -17,14 +17,14 @@ logger = logging.getLogger(__name__)
 _worker_cache: Dict[str, Any] = {}
 
 
-def _init_worker(model_name, topology=None):
+def _init_worker(model_name, topology=None, bridge=None):
     """Initializes a worker process by loading the model once."""
     try:
         from .topology import get_default_topology
         eff_topology = topology or get_default_topology()
         _worker_cache["solver"] = DFBASolver(model_name=model_name)
         _worker_cache["integrator"] = StochasticIntegrator(dt=0.1, noise_scale=0.03, topology=eff_topology)
-        _worker_cache["bridge"] = MetabolicBridge(species_names=eff_topology.species)
+        _worker_cache["bridge"] = bridge or MetabolicBridge(species_names=eff_topology.species)
         logger.info(f"Worker initialized with model: {model_name}")
     except Exception as e:
         logger.error(f"Failed to initialize worker with model {model_name}: {str(e)}")
@@ -33,7 +33,7 @@ def _init_worker(model_name, topology=None):
 
 def _single_sim_wrapper(args):
     """Helper to run a single simulation in a separate process."""
-    drug_kd, drug_concentration, steps, model_name, topology = args
+    drug_kd, drug_concentration, steps, model_name, topology, bridge = args
 
     try:
         from .topology import get_default_topology
@@ -43,13 +43,14 @@ def _single_sim_wrapper(args):
         if "solver" in _worker_cache:
             solver = _worker_cache["solver"]
             integrator = _worker_cache["integrator"]
-            bridge = _worker_cache["bridge"]
+            # If a specific bridge was passed for THIS sim, use it, otherwise use cached
+            sim_bridge = bridge or _worker_cache["bridge"]
             binding = BindingEngine(kd=drug_kd)
         else:
             # Fallback for non-pool execution
             binding = BindingEngine(kd=drug_kd)
             integrator = StochasticIntegrator(dt=0.1, noise_scale=0.03, topology=eff_topology)
-            bridge = MetabolicBridge(species_names=eff_topology.species)
+            sim_bridge = bridge or MetabolicBridge(species_names=eff_topology.species)
             solver = DFBASolver(model_name=model_name)
 
         inhibition = binding.calculate_inhibition(drug_concentration)
@@ -81,7 +82,7 @@ def _single_sim_wrapper(args):
             state = integrator.step(state, inhibition, feedback=feedback)
             
             # 2. Metabolic mapping (Signaling -> Metabolism)
-            constraints = bridge.get_constraints(state)
+            constraints = sim_bridge.get_constraints(state)
             
             # 3. FBA solver
             fba_result = solver.solve_step(constraints)
@@ -92,12 +93,14 @@ def _single_sim_wrapper(args):
             if status != "optimal":
                 history["cell_death"] = True
                 history["death_step"] = step
-                logger.warning(f"Cell death detected at step {step} (FBA status: {status})")
+                diag = fba_result.get("diagnostic", "Unknown constraint")
+                logger.warning(f"Cell death detected at step {step} (FBA status: {status}). Cause: {diag}")
+                history["death_cause"] = diag
                 growth = 0.0
                 feedback = np.zeros(len(eff_topology.species))  # Total metabolic collapse
             else:
                 # 4. Feedback mapping (Metabolism -> Signaling)
-                feedback = bridge.get_feedback(fluxes)
+                feedback = sim_bridge.get_feedback(fluxes)
 
             history["signaling"].append(state.copy())
             history["growth"].append(growth)
@@ -157,7 +160,7 @@ class Workbench:
 
     def get_basal_growth(self, steps=100):
         """Calculates growth rate without any drug inhibition."""
-        args = (self.binding.kd, 0.0, steps, self.model_name, self.topology)
+        args = (self.binding.kd, 0.0, steps, self.model_name, self.topology, self.metabolic_bridge)
         history = _single_sim_wrapper(args)
         return np.mean(history["growth"])
 
@@ -174,7 +177,7 @@ class Workbench:
         if steps <= 0:
             raise ValueError(f"steps must be positive, got {steps}")
 
-        args = (self.binding.kd, self.drug_concentration, steps, self.model_name, self.topology)
+        args = (self.binding.kd, self.drug_concentration, steps, self.model_name, self.topology, self.metabolic_bridge)
         return _single_sim_wrapper(args)
 
     def run_monte_carlo(self, n_sims=30, steps=100, n_jobs=-1):  # noqa: C901
@@ -195,7 +198,9 @@ class Workbench:
             raise ValueError(f"steps must be positive, got {steps}")
 
         # Get basal growth first for normalization
+        print(f"[*] Establishing basal phenotypic baseline...")
         basal_growth = self.get_basal_growth(steps=steps)
+        print(f"[+] Basal Growth: {basal_growth:.4f} h⁻¹")
 
         if n_jobs == -1:
             n_jobs = os.cpu_count() or 1
@@ -205,19 +210,21 @@ class Workbench:
         for _ in range(n_sims):
             perturbed_kd = base_kd * np.random.uniform(0.8, 1.2)
             sim_args.append(
-                (perturbed_kd, self.drug_concentration, steps, self.model_name, self.topology)
+                (perturbed_kd, self.drug_concentration, steps, self.model_name, self.topology, self.metabolic_bridge)
             )
 
         all_histories = []
         # Progress bar logic: Always show if n_sims > 1 to provide immediate feedback
         use_tqdm = n_sims > 1
 
+        print(f"[*] Starting Monte Carlo Ensemble (N={n_sims}, Workers={n_jobs})...")
+
         if n_jobs > 1:
             try:
                 with ProcessPoolExecutor(
                     max_workers=n_jobs,
                     initializer=_init_worker,
-                    initargs=(self.model_name, self.topology),
+                    initargs=(self.model_name, self.topology, self.metabolic_bridge),
                 ) as executor:
                     if use_tqdm:
                         all_histories = list(
@@ -240,9 +247,19 @@ class Workbench:
             if use_tqdm:
                 for args in tqdm(sim_args, desc="Sequential Simulations", leave=False):
                     all_histories.append(_single_sim_wrapper(args))
+                    # Pareto: Early feedback for sequential runs
+                    if len(all_histories) == 1:
+                        first_growth = np.mean(all_histories[0]["growth"])
+                        vitality = (first_growth / basal_growth) * 100 if basal_growth > 0 else 0
+                        print(f"[*] Early Pulse: First simulation shows {vitality:.1f}% vitality.")
             else:
                 for args in sim_args:
                     all_histories.append(_single_sim_wrapper(args))
+
+        # Pareto: Final summary report
+        dead_count = sum(1 for h in all_histories if h.get("cell_death", False))
+        if dead_count > 0:
+            print(f"[!] Warning: {dead_count}/{n_sims} simulations resulted in metabolic collapse (Cell Death).")
 
         return {"histories": all_histories, "basal_growth": basal_growth}
 

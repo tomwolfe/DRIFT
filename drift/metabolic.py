@@ -281,6 +281,32 @@ class DFBASolver:
         self.model_name = model_name
         self._check_solver()
         self.model = self._load_model_safe(model_name)
+        
+        # Pareto: Immediate validation to ensure the model is actually usable.
+        self.validate_model()
+
+    def validate_model(self):
+        """
+        Performs a pre-flight check to ensure the model is viable for DRIFT.
+        Checks for solvers, objectives, and basic growth capability.
+        """
+        logger.info(f"[*] Validating model '{self.model_name}' for DRIFT compatibility...")
+        
+        # 1. Check for objective
+        if not self.model.objective:
+            raise RuntimeError(f"Model '{self.model_name}' has no defined objective function.")
+            
+        # 2. Check if model is solvable in default state
+        try:
+            solution = self.model.optimize()
+            if solution.status != "optimal":
+                raise RuntimeError(f"Model '{self.model_name}' is infeasible in its default state (Status: {solution.status}).")
+            if solution.objective_value <= 0:
+                logger.warning(f"Model '{self.model_name}' has zero growth in default state. Check medium/bounds.")
+        except Exception as e:
+            raise RuntimeError(f"Critical error during model validation: {str(e)}")
+
+        logger.info(f"[+] Model '{self.model_name}' validated successfully.")
 
     def _check_solver(self):
         """Checks if a valid COBRA solver is available and raises a clear error if not."""
@@ -310,6 +336,7 @@ class DFBASolver:
             logger.info(f"Successfully loaded model: {name}")
             return model
         except Exception as e:
+            print(f"[!] Warning: Failed to load requested model '{name}'.")
             logger.warning(
                 f"Failed to load model '{name}': {str(e)}. Attempting fallbacks..."
             )
@@ -322,6 +349,7 @@ class DFBASolver:
                 try:
                     logger.info(f"Trying fallback model: {fallback_name}")
                     model = load_model(fallback_name)
+                    print(f"[!] Falling back to model: '{fallback_name}'. Results may differ from expectations.")
                     logger.info(f"Successfully loaded fallback model: {fallback_name}")
                     return model
                 except Exception as fallback_error:
@@ -339,24 +367,45 @@ class DFBASolver:
 
     def solve_step(self, constraints):
         """
-        Solves FBA with specific constraints.
+        Solves FBA with specific constraints and provides diagnostics on failure.
         """
         if not isinstance(constraints, dict):
             raise ValueError(f"constraints must be a dictionary, got {type(constraints)}")
 
+        # Track applied constraints for diagnostics
+        applied_constraints = {}
         for rxn_id, lb in constraints.items():
             try:
                 rxn = self.model.reactions.get_by_id(rxn_id)
                 rxn.lower_bound = lb
+                applied_constraints[rxn_id] = lb
             except KeyError:
                 logger.debug(f"Reaction {rxn_id} not found in model {self.model_name}")
                 continue
 
         try:
             solution = self.model.optimize()
+            
+            if solution.status != "optimal":
+                # Pareto: Diagnostic "Autopsy"
+                # Check if any of OUR constraints are likely causing the issue
+                limiting_factor = "Unknown (Global Infeasibility)"
+                for rxn_id, lb in applied_constraints.items():
+                    # If the constraint is very tight (near zero or very high)
+                    if lb > -0.1: # Very low uptake allowed
+                        limiting_factor = f"Constraint on {rxn_id} too tight (LB: {lb:.2f})"
+                        break
+                
+                return {
+                    "objective_value": 0.0,
+                    "fluxes": {},
+                    "status": solution.status,
+                    "diagnostic": limiting_factor
+                }
+
             return {
-                "objective_value": solution.objective_value if solution.status == "optimal" else 0.0,
-                "fluxes": solution.fluxes.to_dict() if solution.status == "optimal" else {},
+                "objective_value": solution.objective_value,
+                "fluxes": solution.fluxes.to_dict(),
                 "status": solution.status
             }
         except Exception as e:
@@ -365,5 +414,6 @@ class DFBASolver:
                 "objective_value": 0.0,
                 "fluxes": {},
                 "status": "failed",
-                "error": str(e)
+                "error": str(e),
+                "diagnostic": "Solver error or numerical instability"
             }
