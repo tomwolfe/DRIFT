@@ -44,6 +44,9 @@ class SimulationEngine:
 
         inhibition = self.binding.calculate_inhibition(drug_concentration)
         
+        if self.solver.headless:
+            logger.warning("SimulationEngine: Running in HEADLESS mode. Metabolism is disabled.")
+
         # Initial state from topology
         state = self.integrator.topology.get_initial_state()
         feedback = np.ones(len(self.integrator.topology.species))  # Initial vector feedback
@@ -58,6 +61,7 @@ class SimulationEngine:
             "inhibition": inhibition,
             "drug_kd": self.binding.kd,
             "params": custom_params or {},
+            "headless": self.solver.headless
         }
 
         dt_small = self.integrator.dt / sub_steps

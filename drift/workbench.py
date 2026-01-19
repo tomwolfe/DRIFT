@@ -175,12 +175,24 @@ class Workbench:
             
         self.solver = DFBASolver(model_name=model_name)
         if self.solver.headless:
-            print("[!] WARNING: DFBASolver is in HEADLESS mode. No COBRA-compatible LP solver found.")
-            print("    Multi-scale feedback will be disabled. Install 'swiglpk' to enable FBA.")
+            print("\n" + "!"*80)
+            print("!!! WARNING: DFBASolver is in HEADLESS mode. No COBRA-compatible LP solver found. !!!")
+            print("!!! Multi-scale feedback will be DISABLED. Signaling will run WITHOUT feedback.   !!!")
+            print("!!! To fix this, install a solver: pip install swiglpk                          !!!")
+            print("!"*80 + "\n")
             logger.warning("Workbench initialized with headless DFBASolver.")
         else:
             # Validate bridge against model IDs
             self.metabolic_bridge.validate_with_model(self.solver.model)
+            
+            # Pareto: Auto-calibrate normalization if we have a model
+            try:
+                logger.info("Auto-calibrating MetabolicBridge basal growth rate...")
+                basal_sol = self.solver.model.optimize()
+                if basal_sol.status == "optimal":
+                    self.metabolic_bridge.calibrate(basal_sol.fluxes.to_dict())
+            except Exception as e:
+                logger.warning(f"Auto-calibration failed: {e}")
 
         self.drug_concentration = drug_concentration
         self.model_name = model_name

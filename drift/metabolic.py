@@ -24,34 +24,59 @@ def fuzzy_match_reaction_id(query_id: str, model_reaction_ids: List[str]) -> Opt
     """
     Attempts to find a matching reaction ID in the model using common variations.
     Handles 'EX_' prefixes, case sensitivity, and double underscores.
+    
+    Returns:
+        Optional[str]: The matched ID, or None if no match or multiple ambiguous matches found.
     """
     if query_id in model_reaction_ids:
+        # Exact match is always preferred and unambiguous
         return query_id
     
-    # Try case-insensitive
-    lower_ids = {rid.lower(): rid for rid in model_reaction_ids}
-    if query_id.lower() in lower_ids:
-        return lower_ids[query_id.lower()]
+    matches = []
     
-    # Try adding/removing 'EX_' prefix
+    # Try case-insensitive (check for ALL matches)
+    query_lower = query_id.lower()
+    for rid in model_reaction_ids:
+        if rid.lower() == query_lower:
+            matches.append(rid)
+    
+    # Generate variations
     variations = []
-    if query_id.startswith("EX_"):
+    
+    # 1. Prefix variations
+    if query_id.upper().startswith("EX_"):
         variations.append(query_id[3:])
     else:
         variations.append(f"EX_{query_id}")
     
-    # Try replacing double underscores with single or vice-versa
+    # 2. Underscore variations
     if "__" in query_id:
         variations.append(query_id.replace("__", "_"))
-    else:
-        # This is risky but sometimes helpful
-        pass
+    
+    # 3. Combine prefix and underscore variations
+    # If we added 'EX_', also try it with underscore replacement
+    if not query_id.upper().startswith("EX_") and "__" in query_id:
+        variations.append(f"EX_{query_id.replace('__', '_')}")
+    # If we removed 'EX_', also try it with underscore replacement
+    if query_id.upper().startswith("EX_") and "__" in query_id:
+        variations.append(query_id[3:].replace("__", "_"))
 
+    # Check variations against model IDs (exact and case-insensitive)
     for var in variations:
-        if var in model_reaction_ids:
-            return var
-        if var.lower() in lower_ids:
-            return lower_ids[var.lower()]
+        var_lower = var.lower()
+        for rid in model_reaction_ids:
+            if rid == var or rid.lower() == var_lower:
+                matches.append(rid)
+            
+    # Deduplicate matches
+    unique_matches = list(set(matches))
+    
+    if len(unique_matches) == 1:
+        return unique_matches[0]
+    elif len(unique_matches) > 1:
+        logger.warning(f"Ambiguous fuzzy match for '{query_id}': multiple potential matches found {unique_matches}. "
+                       "Aborting match for safety. Please use explicit IDs.")
+        return None
             
     return None
 
@@ -64,7 +89,8 @@ class MetabolicBridge:
         mappings: Optional[List[Dict[str, Any]]] = None, 
         reverse_mappings: Optional[List[Dict[str, Any]]] = None,
         species_names: Optional[List[str]] = None,
-        strict_mapping: bool = False
+        strict_mapping: bool = False,
+        basal_growth_rate: float = 0.2
     ):
         """
         Initialize the MetabolicBridge.
@@ -74,8 +100,10 @@ class MetabolicBridge:
             reverse_mappings: List of dicts specifying how metabolism affects signaling.
             species_names: Optional list of signaling species names to resolve name-based mappings.
             strict_mapping: If True, disables fuzzy matching and raises error on missing IDs.
+            basal_growth_rate: Reference growth rate for feedback normalization (default: 0.2).
         """
         self.strict_mapping = strict_mapping
+        self.basal_growth_rate = basal_growth_rate
         if mappings is None:
             # Default: mTOR increases glucose uptake capacity
             self.mappings: List[Dict[str, Any]] = [
@@ -98,6 +126,37 @@ class MetabolicBridge:
             self.species_names = species_names
         
         self.reverse_mappings = reverse_mappings or []
+
+    def calibrate(self, reference_fluxes: Dict[str, float]) -> float:
+        """
+        Calibrates the bridge feedback normalization using a reference flux state (e.g., basal growth).
+        
+        Args:
+            reference_fluxes: Fluxes from a 'healthy' or 'basal' FBA solution.
+            
+        Returns:
+            float: The new basal_growth_rate.
+        """
+        growth_keys = ["Biomass_Ecoli_core", "BIOMASS_Ecoli_core_w_GAM", "growth", "BIOMASS_RECON1", "BIOMASS_reaction"]
+        growth_flux = 0.0
+        for key in growth_keys:
+            if key in reference_fluxes:
+                growth_flux = reference_fluxes[key]
+                break
+        
+        if growth_flux <= 0:
+            # Search for anything with biomass in name
+            biomass_fluxes = [v for k, v in reference_fluxes.items() if "BIOMASS" in k.upper()]
+            if biomass_fluxes:
+                growth_flux = max(biomass_fluxes)
+        
+        if growth_flux > 0:
+            logger.info(f"Calibrating MetabolicBridge: Setting basal_growth_rate to {growth_flux:.4f}")
+            self.basal_growth_rate = growth_flux
+        else:
+            logger.warning("Calibration failed: No growth flux found in reference_fluxes. Keeping default.")
+            
+        return self.basal_growth_rate
 
     def validate_with_model(self, model: Any) -> bool:
         """
@@ -124,11 +183,12 @@ class MetabolicBridge:
 
                 matched = fuzzy_match_reaction_id(rxn_id, model_rxn_ids)
                 if matched:
-                    logger.warning(f"CRITICAL: Fuzzy matched mapping reaction '{rxn_id}' to '{matched}'. "
-                                 "This may lead to biological misassignment. Use strict_mapping=True to prevent this.")
+                    logger.warning(f"Fuzzy matched mapping reaction '{rxn_id}' to '{matched}'. "
+                                 "This is a scientific risk. It is HIGHLY RECOMMENDED to use explicit IDs "
+                                 "and set strict_mapping=True for publication-grade results.")
                     mapping["reaction_id"] = matched
                 else:
-                    logger.warning(f"Could not resolve reaction ID '{rxn_id}' in model.")
+                    logger.warning(f"Could not resolve reaction ID '{rxn_id}' in model via exact or fuzzy matching.")
                     all_resolved = False
                     
         # Validate reverse mappings
@@ -142,7 +202,8 @@ class MetabolicBridge:
 
                 matched = fuzzy_match_reaction_id(flux_id, model_rxn_ids)
                 if matched:
-                    logger.warning(f"CRITICAL: Fuzzy matched reverse mapping flux '{flux_id}' to '{matched}'.")
+                    logger.warning(f"Fuzzy matched reverse mapping flux '{flux_id}' to '{matched}'. "
+                                 "Recommendation: Use explicit IDs.")
                     rev_map["flux_id"] = matched
                 else:
                     logger.warning(f"Could not resolve reverse mapping flux ID '{flux_id}' in model.")
@@ -230,7 +291,7 @@ class MetabolicBridge:
             # Fallback to any positive biomass-like flux if common names not found
             growth_flux = max(fluxes.get(k, 0.0) for k in fluxes if "BIOMASS" in k.upper()) if any("BIOMASS" in k.upper() for k in fluxes) else 0.0
 
-        feedback = float(np.clip(growth_flux / 0.2, 0.0, 1.0))
+        feedback = float(np.clip(growth_flux / self.basal_growth_rate, 0.0, 1.0))
         return feedback
 
     def _get_energy_feedback(self, fluxes: Dict[str, float]) -> float:
@@ -450,7 +511,14 @@ class DFBASolver:
                     "DFBASolver: No LP solver found and 'strict' mode is enabled. "
                     "Install GLPK (pip install swiglpk) or another COBRA-compatible solver."
                 )
-            logger.warning(f"DFBASolver initialized in HEADLESS mode (no solver found). FBA will be disabled.")
+            
+            print("\n" + "!"*80)
+            print("!!! WARNING: DFBASolver is running in HEADLESS MODE (No LP Solver found) !!!")
+            print("!!! Metabolic FBA will be DISABLED. Signaling will run WITHOUT metabolic feedback. !!!")
+            print("!!! To fix this, install a solver: pip install swiglpk")
+            print("!"*80 + "\n")
+            
+            logger.warning("DFBASolver initialized in HEADLESS mode (no solver found). FBA will be disabled.")
             self.model = None
             return
 
