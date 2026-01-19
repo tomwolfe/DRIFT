@@ -56,7 +56,7 @@ def _single_sim_wrapper(args):
         
         # Initial state from topology
         state = integrator.topology.get_initial_state()
-        feedback = 1.0  # Initial feedback (healthy state)
+        feedback = np.ones(len(eff_topology.species))  # Initial vector feedback
 
         history = {
             "time": np.arange(steps) * integrator.dt,
@@ -94,7 +94,7 @@ def _single_sim_wrapper(args):
                 history["death_step"] = step
                 logger.warning(f"Cell death detected at step {step} (FBA status: {status})")
                 growth = 0.0
-                feedback = 0.0  # Total metabolic collapse
+                feedback = np.zeros(len(eff_topology.species))  # Total metabolic collapse
             else:
                 # 4. Feedback mapping (Metabolism -> Signaling)
                 feedback = bridge.get_feedback(fluxes)

@@ -54,15 +54,55 @@ class MetabolicBridge:
         self.reverse_mappings = reverse_mappings or []
         self.species_names = species_names
 
-    def get_feedback(self, fluxes: Dict[str, float]) -> float:
+    def get_feedback(self, fluxes: Dict[str, float]) -> np.ndarray:
         """
-        Calculates a global feedback signal based on metabolic state.
-        By default, it uses the growth rate (objective) normalized to a typical value.
+        Calculates metabolite-specific feedback signals.
+        
+        Returns:
+            np.ndarray: Vector of feedback signals, one for each signaling species.
         """
+        if self.species_names is None:
+            # Fallback to global growth-based scalar if no species names defined
+            return np.array([self._get_global_feedback(fluxes)])
+
+        feedback_vec = np.ones(len(self.species_names))
+        global_fb = self._get_global_feedback(fluxes)
+
+        # Apply specific reverse mappings
+        for rev_map in self.reverse_mappings:
+            flux_id = rev_map.get("flux_id")
+            species_name = rev_map.get("species_name")
+            influence = rev_map.get("influence", "positive")
+            weight = rev_map.get("weight", 1.0)
+
+            if flux_id in fluxes and species_name in self.species_names:
+                idx = self.species_names.index(species_name)
+                # Normalize flux (assuming 0 to 1 range for simplified models, or relative to a baseline)
+                # For this implementation, we'll use a simple linear mapping for demonstration
+                flux_val = np.clip(fluxes[flux_id] / 10.0, 0.0, 1.0) 
+                
+                if influence == "positive":
+                    feedback_vec[idx] = (1.0 - weight) + weight * flux_val
+                else:
+                    feedback_vec[idx] = (1.0 - weight) + weight * (1.0 - flux_val)
+
+        # For mTOR (index 2 in default), if no specific feedback, use global
+        if "mTOR" in self.species_names:
+            idx = self.species_names.index("mTOR")
+            # Only apply global if specific feedback hasn't been set (remains 1.0)
+            if feedback_vec[idx] == 1.0:
+                feedback_vec[idx] = global_fb
+        elif len(feedback_vec) > 2: # Backward compatibility for 3-species model
+            if feedback_vec[2] == 1.0:
+                feedback_vec[2] = global_fb
+
+        return feedback_vec
+
+    def _get_global_feedback(self, fluxes: Dict[str, float]) -> float:
+        """Calculates a global feedback signal based on growth rate (internal helper)."""
         if not fluxes:
-            return 1.0  # Default to full activity if no fluxes provided
+            return 1.0
             
-        # Try to find a growth-related flux
         growth_keys = [
             "Biomass_Ecoli_core", 
             "BIOMASS_Ecoli_core_w_GAM", 
@@ -78,10 +118,8 @@ class MetabolicBridge:
                 break
         
         if growth_flux == 0.0 and fluxes:
-            # If no explicit growth key, use the max flux as a proxy for activity
             growth_flux = max(fluxes.values()) if fluxes else 0.0
 
-        # Normalize: 0.2 is a typical max growth for core models
         feedback = float(np.clip(growth_flux / 0.2, 0.0, 1.0))
         return feedback
 
@@ -154,6 +192,7 @@ class BridgeBuilder:
 
     def __init__(self):
         self.mappings = []
+        self.reverse_mappings = []
         self.species_names = None
 
     def set_species_names(self, species_names: List[str]) -> "BridgeBuilder":
@@ -173,15 +212,6 @@ class BridgeBuilder:
     ) -> "BridgeBuilder":
         """
         Adds a mapping from a signaling protein to a metabolic reaction.
-        
-        Args:
-            protein: Either the index (int) or the name (str) of the signaling protein.
-            reaction_id: The ID of the metabolic reaction to constrain.
-            influence: 'positive' or 'negative' effect.
-            base_vmax: The maximum flux capacity.
-            mapping_fn: Optional custom mapping function (protein_level -> scaling_factor).
-            protein_idx: Explicit protein index (for backward compatibility).
-            protein_name: Explicit protein name.
         """
         if influence not in ["positive", "negative"]:
             raise ValueError("influence must be 'positive' or 'negative'")
@@ -211,9 +241,31 @@ class BridgeBuilder:
         self.mappings.append(mapping)
         return self
 
+    def add_reverse_mapping(
+        self,
+        flux_id: str,
+        species_name: str,
+        influence: str = "positive",
+        weight: float = 1.0
+    ) -> "BridgeBuilder":
+        """
+        Adds a feedback mapping from a metabolic flux to a signaling species.
+        """
+        self.reverse_mappings.append({
+            "flux_id": flux_id,
+            "species_name": species_name,
+            "influence": influence,
+            "weight": weight
+        })
+        return self
+
     def build(self) -> MetabolicBridge:
         """Returns the constructed MetabolicBridge."""
-        return MetabolicBridge(mappings=self.mappings, species_names=self.species_names)
+        return MetabolicBridge(
+            mappings=self.mappings, 
+            reverse_mappings=self.reverse_mappings,
+            species_names=self.species_names
+        )
 
 
 class DFBASolver:
@@ -231,22 +283,28 @@ class DFBASolver:
         self.model = self._load_model_safe(model_name)
 
     def _check_solver(self):
-        """Checks if a valid COBRA solver is available."""
-        # Better check via optlang
+        """Checks if a valid COBRA solver is available and raises a clear error if not."""
         try:
             from optlang import available_solvers
-            if not any(available_solvers.values()):
-                logger.error("No COBRA-compatible solvers (GLPK, CPLEX, GUROBI, etc.) found. FBA will fail.")
-                logger.info("Try installing GLPK: 'pip install swiglpk' or 'conda install -c conda-forge glpk'")
+            active_solvers = [s for s, available in available_solvers.items() if available]
+            
+            if not active_solvers:
+                error_msg = (
+                    "No COBRA-compatible solvers (GLPK, CPLEX, GUROBI, etc.) found.\n"
+                    "FBA requires a linear programming solver to function.\n"
+                    "Recommended: Install GLPK by running 'pip install swiglpk' or 'conda install glpk'."
+                )
+                logger.critical(error_msg)
+                raise RuntimeError(error_msg)
+                
+            logger.info(f"Available solvers: {active_solvers}. Using default.")
         except ImportError:
-            logger.warning("Could not check for available solvers via optlang.")
+            logger.warning("Could not check for available solvers via optlang. FBA might fail.")
 
     def _load_model_safe(self, name):
         """
         Safely load a metabolic model with fallback options.
-        Supports 'textbook' (E. coli), 'iJO1366', and human models like 'recon1'.
         """
-        # First try the requested model
         try:
             model = load_model(name)
             logger.info(f"Successfully loaded model: {name}")
@@ -256,11 +314,9 @@ class DFBASolver:
                 f"Failed to load model '{name}': {str(e)}. Attempting fallbacks..."
             )
 
-            # Try common model names as fallbacks
-            # 'textbook' is the most reliable small model
             fallback_models = ["textbook", "e_coli_core", "iJO1366", "recon1"]
             if name in fallback_models:
-                fallback_models.remove(name)  # Don't retry the same failed name
+                fallback_models.remove(name)
 
             for fallback_name in fallback_models:
                 try:
@@ -274,11 +330,9 @@ class DFBASolver:
                     )
                     continue
 
-            # If all attempts fail, raise a more informative error
             error_msg = (
                 f"Could not load requested model '{name}' or any fallback models. "
-                f"Please ensure the model name is valid and the model is available. "
-                f"Common valid models include: 'textbook', 'e_coli_core'."
+                "Please ensure the model name is valid and the model is available."
             )
             logger.critical(error_msg)
             raise RuntimeError(error_msg) from e
@@ -286,17 +340,9 @@ class DFBASolver:
     def solve_step(self, constraints):
         """
         Solves FBA with specific constraints.
-
-        Args:
-            constraints: {rxn_id: lower_bound_value}
-
-        Returns:
-            tuple: (objective_value, flux_dictionary)
         """
         if not isinstance(constraints, dict):
-            raise ValueError(
-                f"constraints must be a dictionary, got {type(constraints)}"
-            )
+            raise ValueError(f"constraints must be a dictionary, got {type(constraints)}")
 
         for rxn_id, lb in constraints.items():
             try:

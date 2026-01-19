@@ -6,12 +6,13 @@ from .topology import Topology, get_default_topology
 
 
 @njit
-def default_drift_fn(state, params, feedback=1.0):
+def default_drift_fn(state, params, feedback=None):
     """
     Default drift function for PI3K/AKT/mTOR with metabolic feedback.
     state: [PI3K, AKT, mTOR]
     params: [k_pi3k_base, k_pi3k_deg, k_akt_act, k_akt_deact, k_mtor_act, k_mtor_deact, inhibition]
-    feedback: Metabolic feedback signal (0-1), affects mTOR activation.
+    feedback: Vector of feedback signals (0-1), one for each species. 
+              mTOR (index 2) is the primary target for metabolic feedback.
     """
     pi3k, akt, mtor = state
     (
@@ -24,6 +25,12 @@ def default_drift_fn(state, params, feedback=1.0):
         inhibition,
     ) = params
 
+    # Default feedback to 1.0 if not provided
+    # Numba requires explicit types or initialization for arrays
+    fb = np.ones(3)
+    if feedback is not None:
+        fb = feedback
+
     # Drug inhibits PI3K activity/availability
     effective_pi3k = pi3k * (1.0 - inhibition)
 
@@ -34,15 +41,15 @@ def default_drift_fn(state, params, feedback=1.0):
     dakt = k_akt_act * effective_pi3k * (1.0 - akt) - k_akt_deact * akt
 
     # mTOR dynamics (activated by AKT, modulated by metabolic feedback)
-    # Feedback acts as a required co-factor for mTOR activation (simulating AMPK/energy sensor)
-    effective_mtor_act = k_mtor_act * feedback
+    # Primary metabolic feedback acts on mTOR
+    effective_mtor_act = k_mtor_act * fb[2]
     dmtor = effective_mtor_act * akt * (1.0 - mtor) - k_mtor_deact * mtor
 
     return np.array([dpi3k, dakt, dmtor])
 
 
 @njit
-def langevin_step(state, dt, params, noise_scale, feedback=1.0):
+def langevin_step(state, dt, params, noise_scale, feedback=None):
     """
     One step of SDE integration using the Milstein scheme for better stability.
     Uses state-dependent noise to ensure biological plausibility near [0, 1] boundaries.
@@ -86,7 +93,7 @@ def create_langevin_integrator(drift_fn):
     from a jitted drift function.
     """
     @njit
-    def custom_milstein_step(state, dt, params, noise_scale, feedback=1.0):
+    def custom_milstein_step(state, dt, params, noise_scale, feedback=None):
         drift = drift_fn(state, params, feedback=feedback)
         
         dw = np.random.normal(0, 1.0, size=len(state)) * np.sqrt(dt)
@@ -138,7 +145,7 @@ class StochasticIntegrator:
         # Default kinetic parameters
         self.base_params = np.array(list(self.topology.parameters.values()))
 
-    def step(self, state, inhibition, feedback=1.0):
+    def step(self, state, inhibition, feedback=None):
         """
         Perform one integration step with optional metabolic feedback.
         """
@@ -153,7 +160,12 @@ class StochasticIntegrator:
                 f"inhibition must be between 0 and 1, got {inhibition}"
             )
         
-        feedback = float(feedback)
+        if feedback is None:
+            feedback = np.ones(len(self.topology.species))
+        elif isinstance(feedback, (float, int)):
+            # Convert scalar feedback to vector for backward compatibility
+            val = float(feedback)
+            feedback = np.ones(len(self.topology.species)) * val
 
         # Performance optimization: if using default topology, use jitted function
         if self.topology.name == "PI3K_AKT_mTOR":
@@ -174,11 +186,14 @@ class StochasticIntegrator:
         # Fallback to generic decay
         return self._generic_step(state, inhibition, feedback=feedback)
 
-    def _custom_step(self, state, inhibition, feedback=1.0):
+    def _custom_step(self, state, inhibition, feedback=None):
         """Step using a custom drift function provided in the topology."""
         if self.topology.drift_fn is None:
             # Fallback if drift_fn is None
             return self._generic_step(state, inhibition, feedback=feedback)
+
+        if feedback is None:
+            feedback = np.ones(len(state))
 
         # Custom drift functions should now ideally accept feedback as well
         # We try to pass it if possible, otherwise we ignore it for backward compatibility
@@ -191,10 +206,14 @@ class StochasticIntegrator:
         new_state = state + drift * self.dt + diffusion
         return np.clip(new_state, 0, 1)
 
-    def _generic_step(self, state, inhibition, feedback=1.0):
+    def _generic_step(self, state, inhibition, feedback=None):
         """Generic Euler-Maruyama step for unknown topologies."""
-        # Fallback: very simple decay-to-zero drift modulated by feedback
-        drift = -0.1 * state * (2.0 - feedback)  # Lower feedback increases decay
+        if feedback is None:
+            feedback = np.ones(len(state))
+            
+        # Fallback: simple decay modulated by mean feedback for generic case
+        mean_feedback = np.mean(feedback)
+        drift = -0.1 * state * (2.0 - mean_feedback) 
         
         # Apply inhibition if topology specifies an inhibited species
         inhibited_species = getattr(self.topology, "inhibited_species", None)
