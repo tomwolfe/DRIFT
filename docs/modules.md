@@ -40,3 +40,7 @@ The `Workbench` is the high-level API for users.
 - **`create_dashboard(results: dict)`**
   - Generates a rich, interactive Plotly dashboard.
   - Visualizes signaling trajectories, growth rate fluctuations, and ensemble statistics with shaded uncertainty envelopes.
+
+## Complete API Reference
+
+For detailed API documentation with all parameters, return types, and examples, see the [API Reference](api_reference.md).

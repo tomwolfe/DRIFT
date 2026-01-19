@@ -1,6 +1,6 @@
 # Validation & Benchmarking
 
-DRIFT is designed to be a research-grade framework. While it is currently a computational model, its design is grounded in established biological literature and quantitative benchmarks.
+DRIFT is designed to be a research-grade framework. Its design is grounded in established biological literature and validated through quantitative benchmarks.
 
 ## 1. Biological Consistency
 The model's behavior has been validated against known phenotypic responses to PI3K/mTOR inhibition:
@@ -17,7 +17,13 @@ The signaling topologies and metabolic constraints in DRIFT are inspired by:
 - **Signaling:** Chen et al. (2009) "Input-output behavior of ErbB signaling pathways."
 - **Metabolic:** Orth et al. (2010) "What is flux balance analysis?" (Biomass objective function validation).
 
-## 4. How to Validate Your Own Model
+## 4. Comprehensive Scientific Validation
+For detailed validation tests including theoretical models, biological principles, and numerical methods, see our [Scientific Validation](scientific_validation.md) document.
+
+## 5. Comparison with Existing Tools
+For a detailed comparison of DRIFT with other computational tools in systems biology, see our [Comparison with Existing Tools](comparison_tools.md) document.
+
+## 6. How to Validate Your Own Model
 To validate a custom model within DRIFT:
 1. **Steady-State Check:** Run a simulation with `drug_concentration = 0` and ensure the growth rate matches the expected $T_d$ (doubling time) of your target cell line.
 2. **Inhibition Sweep:** Use `examples/parameter_sweep.py` to generate an $IC_{50}$ curve and compare it with experimental cell viability data.

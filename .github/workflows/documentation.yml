@@ -1,0 +1,88 @@
+name: Documentation
+
+on:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install dependencies
+      run: |
+        pip install sphinx sphinx-rtd-theme sphinx-autodoc-typehints
+        
+    - name: Build documentation
+      run: |
+        # Create docs build directory
+        mkdir -p _build/html
+        
+        # Use sphinx to build documentation
+        # If sphinx-build is not available, create a simple copy
+        if ! command -v sphinx-build &> /dev/null; then
+          echo "Sphinx not available, creating simple documentation site"
+          mkdir -p _build/html/docs
+          cp -r docs/* _build/html/docs/
+          cp -r examples/ _build/html/examples/
+          
+          # Create a basic index
+          cat > _build/html/index.html << EOF
+<!DOCTYPE html>
+<html>
+<head>
+    <title>DRIFT Documentation</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        h1 { color: #2e8b57; }
+        ul { line-height: 1.8; }
+    </style>
+</head>
+<body>
+    <h1>DRIFT Documentation</h1>
+    <h2>Available Documents:</h2>
+    <ul>
+        <li><a href="docs/tutorial.html">Tutorial</a></li>
+        <li><a href="docs/api_reference.html">API Reference</a></li>
+        <li><a href="docs/validation.html">Validation</a></li>
+        <li><a href="docs/scientific_validation.html">Scientific Validation</a></li>
+        <li><a href="docs/comparison_tools.html">Tool Comparison</a></li>
+        <li><a href="examples/">Examples</a></li>
+    </ul>
+</body>
+</html>
+EOF
+        else
+          sphinx-build -b html docs _build/html
+        fi
+        
+    - name: Setup Pages
+      uses: actions/configure-pages@v3
+      
+    - name: Upload artifact
+      uses: actions/upload-pages-artifact@v2
+      with:
+        path: '_build/html'
+        
+    - name: Deploy to GitHub Pages
+      id: deployment
+      uses: actions/deploy-pages@v2
