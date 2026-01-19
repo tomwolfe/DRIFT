@@ -49,7 +49,7 @@ class MetabolicBridge:
             ]
             # Provide default species names if they are missing to resolve "mTOR"
             if species_names is None:
-                self.species_names = ["PI3K", "AKT", "mTOR"]
+                self.species_names: Optional[List[str]] = ["PI3K", "AKT", "mTOR"]
             else:
                 self.species_names = species_names
         else:
@@ -240,7 +240,7 @@ class BridgeBuilder:
     def __init__(self):
         self.mappings = []
         self.reverse_mappings = []
-        self.species_names = None
+        self.species_names: Optional[List[str]] = None
 
     def set_species_names(self, species_names: List[str]) -> "BridgeBuilder":
         """Sets the species names for the bridge."""

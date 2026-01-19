@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 # Global cache for workers to avoid reloading model
 # Key format: (model_name, topology_name, bridge_hash)
-_worker_cache: Dict[str, Any] = {}
+_worker_cache: Dict[tuple[str, str], Any] = {}
 
 
 def _init_worker(model_name, topology=None, bridge=None):
