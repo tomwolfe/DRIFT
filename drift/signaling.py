@@ -144,6 +144,35 @@ class StochasticIntegrator:
         
         # Default kinetic parameters
         self.base_params = np.array(list(self.topology.parameters.values()))
+        
+        # Stability check
+        self._check_stability()
+
+    def _check_stability(self):
+        """
+        Heuristic stability check for the Milstein scheme.
+        Warns if dt is too large relative to noise_scale or absolute time-step.
+        """
+        import warnings
+        
+        # 1. Absolute dt check
+        if self.dt > 0.2:
+            warnings.warn(
+                f"Large time-step (dt={self.dt}) detected. This may lead to "
+                "integration inaccuracies in highly non-linear signaling systems.",
+                RuntimeWarning
+            )
+            
+        # 2. Noise-driven stability check
+        # For Milstein on [0, 1] bounded systems, noise_scale * sqrt(dt) 
+        # should ideally be small enough to avoid frequent boundary hitting.
+        noise_impact = self.noise_scale * np.sqrt(self.dt)
+        if noise_impact > 0.1:
+            warnings.warn(
+                f"High noise impact detected (noise_scale * sqrt(dt) = {noise_impact:.3f}). "
+                "Milstein scheme stability may be compromised. Consider reducing dt or noise_scale.",
+                RuntimeWarning
+            )
 
     def step(self, state, inhibition, feedback=None):
         """

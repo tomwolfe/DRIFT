@@ -195,7 +195,36 @@ class Workbench:
         args = (self.binding.kd, self.drug_concentration, steps, self.model_name, self.topology, self.metabolic_bridge, None)
         return _single_sim_wrapper(args)
 
-    def run_monte_carlo(self, n_sims=30, steps=100, n_jobs=-1, perturb_params: List[str] = None):  # noqa: C901
+    def _history_to_rows(self, hist, sim_idx):
+        """Internal helper to convert a history dict to a list of flat rows."""
+        rows = []
+        from .topology import get_default_topology
+        eff_topology = self.topology or get_default_topology()
+        species_names = eff_topology.species
+
+        for step_idx in range(len(hist["time"])):
+            row = {
+                "sim_id": sim_idx,
+                "step": step_idx,
+                "time": hist["time"][step_idx],
+                "time_unit": self.time_unit,
+                "growth": hist["growth"][step_idx],
+                "drug_kd": hist["drug_kd"],
+                "concentration_unit": self.concentration_unit,
+                "inhibition": hist.get("inhibition", 0.0),
+            }
+            # Add signaling species
+            for i, species in enumerate(species_names):
+                row[species] = hist["signaling"][step_idx, i]
+            
+            # Add custom parameters
+            for p_name, p_val in hist.get("params", {}).items():
+                row[f"param_{p_name}"] = p_val
+            
+            rows.append(row)
+        return rows
+
+    def run_monte_carlo(self, n_sims=30, steps=100, n_jobs=-1, perturb_params: List[str] = None, export_to: str = None, return_generator: bool = False):  # noqa: C901
         """
         Runs multiple simulations with perturbed parameters in parallel.
 
@@ -203,15 +232,23 @@ class Workbench:
             n_sims (int): Number of simulations to run
             steps (int): Number of steps per simulation
             n_jobs (int): Number of parallel jobs (-1 for CPU count)
-            perturb_params (List[str]): List of signaling parameter names to perturb in addition to drug_kd.
+            perturb_params (List[str]): List of signaling parameter names to perturb.
+            export_to (str, optional): Path to a Parquet file for incremental writing.
+            return_generator (bool): If True, returns a generator yielding histories one by one.
 
         Returns:
-            dict: Results containing 'histories' and 'basal_growth'
+            dict or generator: Results containing 'histories' or a generator of histories.
         """
         if n_sims <= 0:
             raise ValueError(f"n_sims must be positive, got {n_sims}")
         if steps <= 0:
             raise ValueError(f"steps must be positive, got {steps}")
+
+        if n_sims * steps > 100000 and not (export_to or return_generator):
+            logger.warning(
+                f"Large simulation ensemble ({n_sims} sims * {steps} steps) may cause "
+                "memory issues. Consider using export_to='path.parquet' or return_generator=True."
+            )
 
         print(f"[*] Establishing basal phenotypic baseline...")
         basal_growth = self.get_basal_growth(steps=steps)
@@ -237,46 +274,59 @@ class Workbench:
                 (perturbed_kd, self.drug_concentration, steps, self.model_name, self.topology, self.metabolic_bridge, custom_params)
             )
 
-        all_histories = []
-        use_tqdm = n_sims > 1
-
         print(f"[*] Starting Monte Carlo Ensemble (N={n_sims}, Workers={n_jobs})...")
 
-        if n_jobs > 1:
+        def _gen_results():
+            writer = None
             try:
-                ctx = mp.get_context('fork') if hasattr(mp, 'get_context') and os.name != 'nt' else mp.get_context('spawn')
-                
-                with ProcessPoolExecutor(
-                    max_workers=n_jobs,
-                    mp_context=ctx,
-                    initializer=_init_worker,
-                    initargs=(self.model_name, self.topology, self.metabolic_bridge),
-                ) as executor:
-                    if use_tqdm:
-                        all_histories = list(
-                            tqdm(
-                                executor.map(_single_sim_wrapper, sim_args),
-                                total=len(sim_args),
-                                desc="Monte Carlo Simulations",
-                                leave=False,
-                            )
-                        )
-                    else:
-                        all_histories = list(
-                            executor.map(_single_sim_wrapper, sim_args)
-                        )
-            except Exception as e:
-                logger.error(f"Error in multiprocessing: {str(e)}. Falling back to sequential.")
-                n_jobs = 1
+                if n_jobs > 1:
+                    ctx = mp.get_context('fork') if hasattr(mp, 'get_context') and os.name != 'nt' else mp.get_context('spawn')
+                    with ProcessPoolExecutor(
+                        max_workers=n_jobs,
+                        mp_context=ctx,
+                        initializer=_init_worker,
+                        initargs=(self.model_name, self.topology, self.metabolic_bridge),
+                    ) as executor:
+                        iterator = executor.map(_single_sim_wrapper, sim_args)
+                        for i, hist in enumerate(tqdm(iterator, total=n_sims, desc="Monte Carlo", disable=n_sims < 2)):
+                            if export_to:
+                                df_chunk = pd.DataFrame(self._history_to_rows(hist, i))
+                                if writer is None:
+                                    import pyarrow as pa
+                                    import pyarrow.parquet as pq
+                                    table = pa.Table.from_pandas(df_chunk)
+                                    writer = pq.ParquetWriter(export_to, table.schema)
+                                    writer.write_table(table)
+                                else:
+                                    table = pa.Table.from_pandas(df_chunk)
+                                    writer.write_table(table)
+                            yield hist
+                else:
+                    for i, args in enumerate(tqdm(sim_args, desc="Sequential MC", disable=n_sims < 2)):
+                        hist = _single_sim_wrapper(args)
+                        if export_to:
+                            df_chunk = pd.DataFrame(self._history_to_rows(hist, i))
+                            if writer is None:
+                                import pyarrow as pa
+                                import pyarrow.parquet as pq
+                                table = pa.Table.from_pandas(df_chunk)
+                                writer = pq.ParquetWriter(export_to, table.schema)
+                                writer.write_table(table)
+                            else:
+                                table = pa.Table.from_pandas(df_chunk)
+                                writer.write_table(table)
+                        yield hist
+            finally:
+                if writer:
+                    writer.close()
+                    print(f"[+] Incremental export saved to {export_to}")
 
-        if n_jobs <= 1:
-            if use_tqdm:
-                for args in tqdm(sim_args, desc="Sequential Simulations", leave=False):
-                    all_histories.append(_single_sim_wrapper(args))
-            else:
-                for args in sim_args:
-                    all_histories.append(_single_sim_wrapper(args))
-
+        if return_generator or export_to:
+            return _gen_results()
+        
+        # Default behavior: collect all in memory
+        all_histories = list(_gen_results())
+        
         dead_count = sum(1 for h in all_histories if h.get("cell_death", False))
         if dead_count > 0:
             print(f"[!] Warning: {dead_count}/{n_sims} simulations resulted in metabolic collapse (Cell Death).")
@@ -320,31 +370,9 @@ class Workbench:
         """
         all_data = []
         histories = results.get("histories", [])
-        from .topology import get_default_topology
-        eff_topology = self.topology or get_default_topology()
-        species_names = eff_topology.species
-
+        
         for sim_idx, hist in enumerate(histories):
-            for step_idx in range(len(hist["time"])):
-                row = {
-                    "sim_id": sim_idx,
-                    "step": step_idx,
-                    "time": hist["time"][step_idx],
-                    "time_unit": self.time_unit,
-                    "growth": hist["growth"][step_idx],
-                    "drug_kd": hist["drug_kd"],
-                    "concentration_unit": self.concentration_unit,
-                    "inhibition": hist.get("inhibition", 0.0),
-                }
-                # Add signaling species
-                for i, species in enumerate(species_names):
-                    row[species] = hist["signaling"][step_idx, i]
-                
-                # Add custom parameters
-                for p_name, p_val in hist.get("params", {}).items():
-                    row[f"param_{p_name}"] = p_val
-                
-                all_data.append(row)
+            all_data.extend(self._history_to_rows(hist, sim_idx))
 
         df = pd.DataFrame(all_data)
         os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)

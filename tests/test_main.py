@@ -83,6 +83,8 @@ class TestMainModule(unittest.TestCase):
             drug_kd=0.5, 
             drug_concentration=1.0, 
             model_name="textbook",
+            topology=None,
+            bridge=None,
             time_unit="hours",
             concentration_unit="uM"
         )

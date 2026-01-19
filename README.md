@@ -80,6 +80,18 @@ DRIFT's modeling approach is grounded in established systems biology literature:
 pip install -e .
 ```
 
+**Solver Setup (Critical):**
+DRIFT relies on `cobrapy` and `optlang` for metabolic solving. While it handles missing solvers gracefully by falling back to GLPK (via `swiglpk`), we recommend:
+
+1. **GLPK (Default):** Usually installed via `swiglpk`. If you encounter build errors on **M1/M2 Macs**:
+   ```bash
+   brew install glpk
+   export C_INCLUDE_PATH=/opt/homebrew/include
+   export LIBRARY_PATH=/opt/homebrew/lib
+   pip install swiglpk
+   ```
+2. **CPLEX / Gurobi:** For large-scale models, these commercial solvers (free for academics) are significantly faster. Ensure they are in your Python environment's path.
+
 **Using Conda:**
 ```bash
 conda env create -f environment.yml
