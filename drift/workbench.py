@@ -62,11 +62,21 @@ def _single_sim_wrapper(args):
             "time": np.arange(steps) * integrator.dt,
             "signaling": [],
             "growth": [],
+            "status": [],
+            "cell_death": False,
+            "death_step": None,
             "inhibition": inhibition,
             "drug_kd": drug_kd,
         }
 
         for step in range(steps):
+            if history["cell_death"]:
+                # Once dead, stay dead
+                history["signaling"].append(state.copy())
+                history["growth"].append(0.0)
+                history["status"].append("dead")
+                continue
+
             # 1. Signaling step (influenced by previous metabolic feedback)
             state = integrator.step(state, inhibition, feedback=feedback)
             
@@ -77,12 +87,21 @@ def _single_sim_wrapper(args):
             fba_result = solver.solve_step(constraints)
             growth = fba_result["objective_value"]
             fluxes = fba_result["fluxes"]
+            status = fba_result["status"]
 
-            # 4. Feedback mapping (Metabolism -> Signaling)
-            feedback = bridge.get_feedback(fluxes)
+            if status != "optimal":
+                history["cell_death"] = True
+                history["death_step"] = step
+                logger.warning(f"Cell death detected at step {step} (FBA status: {status})")
+                growth = 0.0
+                feedback = 0.0  # Total metabolic collapse
+            else:
+                # 4. Feedback mapping (Metabolism -> Signaling)
+                feedback = bridge.get_feedback(fluxes)
 
             history["signaling"].append(state.copy())
             history["growth"].append(growth)
+            history["status"].append(status)
 
         history["signaling"] = np.array(history["signaling"])
         history["growth"] = np.array(history["growth"])

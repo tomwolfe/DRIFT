@@ -28,6 +28,7 @@ classifiers = [
 keywords = ["systems-biology", "metabolic-modeling", "fba", "stochastic-differential-equations", "drug-response", "sbml"]
 dependencies = [
     "cobra",
+    "optlang",
     "numpy",
     "scipy",
     "numba",

@@ -1,4 +1,5 @@
 cobra
+optlang
 numpy
 scipy
 numba

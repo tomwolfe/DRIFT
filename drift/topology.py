@@ -17,12 +17,14 @@ class Topology:
         drift_fn: Optional[Callable] = None,
         name: str = "custom_topology",
         inhibited_species: Optional[str] = None,
+        jitted_step_fn: Optional[Callable] = None,
     ):
         self.species = species
         self.parameters = parameters
         self.drift_fn = drift_fn
         self.name = name
         self.inhibited_species = inhibited_species
+        self.jitted_step_fn = jitted_step_fn
 
     @classmethod
     def from_json(cls, json_path: str):

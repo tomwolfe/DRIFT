@@ -1,10 +1,23 @@
 from cobra.io import load_model
 import numpy as np
 import logging
-from typing import List, Dict, Any, Union, Optional
+from typing import List, Dict, Any, Union, Optional, Callable
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+
+def sigmoidal_mapping(x, k=10, x0=0.5):
+    """Sigmoidal mapping function: 1 / (1 + exp(-k * (x - x0)))"""
+    return 1 / (1 + np.exp(-k * (x - x0)))
+
+
+def michaelis_menten_mapping(x, km=0.5):
+    """Michaelis-Menten mapping function: x / (km + x)"""
+    # Normalize so that at x=1.0 it returns something close to 1.0 (or at least defined)
+    # MM is x/(Km+x). At x=1, it is 1/(Km+1).
+    # To have it range from 0 to 1, we can use x*(Km+1)/(Km+x)
+    return (x * (km + 1)) / (km + x)
 
 
 class MetabolicBridge:
@@ -91,6 +104,7 @@ class MetabolicBridge:
             rxn_id: str = map_config["reaction_id"]
             base_vmax: float = map_config.get("base_vmax", 10.0)
             influence: str = map_config.get("influence", "positive")
+            mapping_fn = map_config.get("mapping_fn")
 
             # Resolve name to index if possible
             if name is not None and self.species_names is not None:
@@ -111,11 +125,14 @@ class MetabolicBridge:
                 )
                 protein_level = max(0.0, min(1.0, protein_level))
 
-            if influence == "positive":
-                # Scaling factor: 0.1 basal to 1.0 max
+            if mapping_fn is not None:
+                # Use custom mapping function
+                scaling = mapping_fn(protein_level)
+            elif influence == "positive":
+                # Default linear scaling: 0.1 basal to 1.0 max
                 scaling = 0.1 + 0.9 * protein_level
             else:
-                # Inhibitory effect
+                # Default inhibitory effect
                 scaling = 1.0 - 0.9 * protein_level
 
             # COBRA exchange reactions: Flux > -UB (uptake)
@@ -143,6 +160,7 @@ class BridgeBuilder:
         reaction_id: str = "", 
         influence: str = "positive", 
         base_vmax: float = 10.0,
+        mapping_fn: Optional[Callable[[float], float]] = None,
         protein_idx: Optional[int] = None,
         protein_name: Optional[str] = None
     ) -> "BridgeBuilder":
@@ -154,6 +172,7 @@ class BridgeBuilder:
             reaction_id: The ID of the metabolic reaction to constrain.
             influence: 'positive' or 'negative' effect.
             base_vmax: The maximum flux capacity.
+            mapping_fn: Optional custom mapping function (protein_level -> scaling_factor).
             protein_idx: Explicit protein index (for backward compatibility).
             protein_name: Explicit protein name.
         """
@@ -163,7 +182,8 @@ class BridgeBuilder:
         mapping = {
             "reaction_id": reaction_id,
             "influence": influence,
-            "base_vmax": base_vmax
+            "base_vmax": base_vmax,
+            "mapping_fn": mapping_fn
         }
         
         # Resolve protein identifier
@@ -200,7 +220,19 @@ class DFBASolver:
             model_name (str): Name of the metabolic model to use
         """
         self.model_name = model_name
+        self._check_solver()
         self.model = self._load_model_safe(model_name)
+
+    def _check_solver(self):
+        """Checks if a valid COBRA solver is available."""
+        # Better check via optlang
+        try:
+            from optlang import available_solvers
+            if not any(available_solvers.values()):
+                logger.error("No COBRA-compatible solvers (GLPK, CPLEX, GUROBI, etc.) found. FBA will fail.")
+                logger.info("Try installing GLPK: 'pip install swiglpk' or 'conda install -c conda-forge glpk'")
+        except ImportError:
+            logger.warning("Could not check for available solvers via optlang.")
 
     def _load_model_safe(self, name):
         """

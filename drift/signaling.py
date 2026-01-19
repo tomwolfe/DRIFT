@@ -61,6 +61,37 @@ def langevin_step(state, dt, params, noise_scale, feedback=1.0):
     return new_state
 
 
+def create_langevin_integrator(drift_fn):
+    """
+    Higher-order function that creates a jitted Langevin integrator step 
+    from a jitted drift function.
+    
+    Args:
+        drift_fn: A function decorated with @njit that takes (state, params, feedback)
+                 and returns the drift vector.
+                 
+    Returns:
+        A jitted function that can be used as jitted_step_fn in a Topology.
+    """
+    @njit
+    def custom_langevin_step(state, dt, params, noise_scale, feedback=1.0):
+        drift = drift_fn(state, params, feedback=feedback)
+        
+        # Update state
+        new_state = state + drift * dt + np.random.normal(0, noise_scale, size=len(state)) * np.sqrt(dt)
+
+        # Physical constraints: proteins stay in [0, 1] range (normalized)
+        for i in range(len(new_state)):
+            if new_state[i] < 0:
+                new_state[i] = 0
+            if new_state[i] > 1:
+                new_state[i] = 1
+
+        return new_state
+        
+    return custom_langevin_step
+
+
 class StochasticIntegrator:
     """Integrator for stochastic differential equations in signaling pathways."""
 
@@ -107,7 +138,14 @@ class StochasticIntegrator:
             params = np.concatenate((self.base_params, [inhibition]))
             return langevin_step(state, self.dt, params, self.noise_scale, feedback=feedback)
 
-        # Custom topology with provided drift_fn
+        # High-performance custom topology
+        if self.topology.jitted_step_fn is not None:
+            # We assume the jitted_step_fn has signature (state, dt, params, noise_scale, feedback)
+            # or it handles inhibition inside its params
+            params = np.concatenate((self.base_params, [inhibition]))
+            return self.topology.jitted_step_fn(state, self.dt, params, self.noise_scale, feedback)
+
+        # Custom topology with provided drift_fn (non-jitted fallback)
         if self.topology.drift_fn is not None:
             return self._custom_step(state, inhibition, feedback=feedback)
 
