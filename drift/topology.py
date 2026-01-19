@@ -128,20 +128,3 @@ def get_default_topology() -> Topology:
         },
         name="PI3K_AKT_mTOR"
     )
-
-def get_human_cancer_topology() -> Topology:
-    """Returns a signaling topology common in human cancer (includes AMPK)."""
-    return Topology(
-        species=["PI3K", "AKT", "mTOR", "AMPK"],
-        parameters={
-            "k_pi3k_base": 0.1,
-            "k_pi3k_deg": 0.1,
-            "k_akt_act": 0.5,
-            "k_akt_deact": 0.1,
-            "k_mtor_act": 0.5,
-            "k_mtor_deact": 0.1,
-            "k_ampk_base": 0.2,
-            "k_ampk_deg": 0.1,
-        },
-        name="Human_Cancer_Signaling"
-    )

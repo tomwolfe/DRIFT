@@ -30,10 +30,9 @@ def main(config: SimulationConfig = None, run_sensitivity=False, json_export=Non
     topology = None
     bridge = None
     if human_cancer:
-        from drift.topology import get_human_cancer_topology
-        from drift.metabolic import MetabolicBridge
+        from drift.presets import get_human_cancer_topology, get_human_cancer_bridge
         topology = get_human_cancer_topology()
-        bridge = MetabolicBridge.get_human_cancer_bridge()
+        bridge = get_human_cancer_bridge()
         config.model_name = "recon1" # Standard human model
         print("[*] Human Cancer Mode enabled (PI3K/AKT/mTOR/AMPK + Recon1)")
 

@@ -39,8 +39,6 @@ class MetabolicBridge:
         """
         if mappings is None:
             # Default: mTOR increases glucose uptake capacity
-            # REMOVED protein_idx: 2 to prevent silent mapping errors.
-            # Name-based lookup is now the enforced default.
             self.mappings: List[Dict[str, Any]] = [
                 {
                     "protein_name": "mTOR",
@@ -49,11 +47,16 @@ class MetabolicBridge:
                     "base_vmax": 10.0,
                 }
             ]
+            # Provide default species names if they are missing to resolve "mTOR"
+            if species_names is None:
+                self.species_names = ["PI3K", "AKT", "mTOR"]
+            else:
+                self.species_names = species_names
         else:
             self.mappings = mappings
+            self.species_names = species_names
         
         self.reverse_mappings = reverse_mappings or []
-        self.species_names = species_names
 
     def get_feedback(self, fluxes: Dict[str, float]) -> np.ndarray:
         """
@@ -103,19 +106,12 @@ class MetabolicBridge:
                 else:
                     feedback_vec[idx] = (1.0 - weight) + weight * (1.0 - transformed_val)
 
-        # Apply default biological feedbacks if not explicitly overridden
-        for i, name in enumerate(self.species_names):
-            if feedback_vec[i] == 1.0: # Only if not already set by specific mapping
-                if name == "mTOR":
-                    # mTOR is sensitive to both growth and energy
-                    feedback_vec[i] = 0.5 * global_fb + 0.5 * energy_fb
-                elif name == "AMPK":
-                    # AMPK is activated (high value) when energy is low (low energy_fb)
-                    # So AMPK feedback = 1.0 - energy_fb
-                    feedback_vec[i] = 1.0 - energy_fb
-                elif name in ["PI3K", "AKT"]:
-                    # These might have some mild sensitivity to global state
-                    feedback_vec[i] = 0.8 + 0.2 * global_fb
+        # If no specific mappings were applied, apply a generic global feedback
+        # to ensure the system remains coupled even with minimal configuration.
+        for i in range(len(feedback_vec)):
+            if feedback_vec[i] == 1.0:
+                # Default behavior: slight sensitivity to global metabolic state
+                feedback_vec[i] = 0.9 + 0.1 * global_fb
 
         return feedback_vec
 
@@ -151,12 +147,18 @@ class MetabolicBridge:
             return 1.0
             
         # Proxy: Total ATP production flux
-        # In textbook model, ATPS4r is the main ATP synthase
-        atp_flux = fluxes.get("ATPS4r", 0.0)
+        # ATPS4r (textbook), ATPMS (Recon1), etc.
+        atp_keys = ["ATPS4r", "ATPMS", "ATPS", "ATPSv"]
+        atp_flux = 0.0
+        for key in atp_keys:
+            if key in fluxes:
+                atp_flux = fluxes[key]
+                break
         
         # If not found, look for other ATP-producing reactions
         if atp_flux == 0.0:
-            atp_flux = sum(f for k, f in fluxes.items() if "ATP" in k and f > 0)
+            # Sum of all positive fluxes through reactions containing 'ATP' and 'synthase' or 'synth'
+            atp_flux = sum(f for k, f in fluxes.items() if ("ATP" in k.upper() and ("SYNTH" in k.upper() or "S4R" in k.upper())) and f > 0)
             
         # Normalize: textbook ATPS4r is around 2-10 under good growth
         energy_state = float(np.clip(atp_flux / 5.0, 0.0, 1.0))
@@ -226,39 +228,10 @@ class MetabolicBridge:
                 scaling = 1.0 - 0.9 * protein_level
 
             # COBRA exchange reactions: Flux > -UB (uptake)
-            # We scale the magnitude of the negative lower bound.
+            # scale the magnitude of the negative lower bound.
             constraints[rxn_id] = -(base_vmax * scaling)
 
         return constraints
-
-
-    @classmethod
-    def get_human_cancer_bridge(cls):
-        """
-        Returns a pre-configured MetabolicBridge for human cancer research.
-        Maps PI3K/AKT/mTOR signaling to Recon1 metabolic subsystems.
-        """
-        builder = BridgeBuilder()
-        builder.set_species_names(["PI3K", "AKT", "mTOR", "AMPK"])
-        
-        # Warburg Effect: mTOR increases glucose uptake and lactate secretion
-        builder.add_mapping(protein_name="mTOR", reaction_id="EX_glc__D_e", influence="positive", base_vmax=15.0)
-        builder.add_mapping(protein_name="mTOR", reaction_id="EX_lac__L_e", influence="positive", base_vmax=20.0)
-        
-        # Glutaminolysis: AKT increases glutamine uptake
-        builder.add_mapping(protein_name="AKT", reaction_id="EX_gln__L_e", influence="positive", base_vmax=5.0)
-        
-        # Energy sensing: AMPK activates fatty acid oxidation and oxidative phosphorylation
-        builder.add_mapping(protein_name="AMPK", reaction_id="EX_o2_e", influence="positive", base_vmax=20.0)
-        
-        # Reverse mappings (Metabolism -> Signaling)
-        # Low energy (low ATP synthase flux) activates AMPK
-        builder.add_reverse_mapping(flux_id="ATPS4r", species_name="AMPK", influence="negative", weight=0.8)
-        
-        # Growth influences mTOR
-        builder.add_reverse_mapping(flux_id="BIOMASS_RECON1", species_name="mTOR", influence="positive", weight=0.5)
-        
-        return builder.build()
 
 
 class BridgeBuilder:

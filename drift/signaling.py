@@ -6,15 +6,17 @@ from .topology import Topology, get_default_topology
 
 
 @njit
-def default_drift_fn(state, params, feedback=None):
+def pi3k_akt_mtor_drift(state, params, feedback=None):
     """
-    Default drift function for PI3K/AKT/mTOR with metabolic feedback.
+    Specific drift function for PI3K/AKT/mTOR with metabolic feedback.
     state: [PI3K, AKT, mTOR]
     params: [k_pi3k_base, k_pi3k_deg, k_akt_act, k_akt_deact, k_mtor_act, k_mtor_deact, inhibition]
-    feedback: Vector of feedback signals (0-1), one for each species. 
-              mTOR (index 2) is the primary target for metabolic feedback.
     """
-    pi3k, akt, mtor = state
+    if len(state) < 3:
+        # Fallback or error for Numba
+        return np.zeros_like(state)
+
+    pi3k, akt, mtor = state[0], state[1], state[2]
     (
         k_pi3k_base,
         k_pi3k_deg,
@@ -23,11 +25,10 @@ def default_drift_fn(state, params, feedback=None):
         k_mtor_act,
         k_mtor_deact,
         inhibition,
-    ) = params
+    ) = params[:7]
 
     # Default feedback to 1.0 if not provided
-    # Numba requires explicit types or initialization for arrays
-    fb = np.ones(3)
+    fb = np.ones(len(state))
     if feedback is not None:
         fb = feedback
 
@@ -41,11 +42,22 @@ def default_drift_fn(state, params, feedback=None):
     dakt = k_akt_act * effective_pi3k * (1.0 - akt) - k_akt_deact * akt
 
     # mTOR dynamics (activated by AKT, modulated by metabolic feedback)
-    # Primary metabolic feedback acts on mTOR
+    # Primary metabolic feedback acts on mTOR (index 2)
     effective_mtor_act = k_mtor_act * fb[2]
     dmtor = effective_mtor_act * akt * (1.0 - mtor) - k_mtor_deact * mtor
 
-    return np.array([dpi3k, dakt, dmtor])
+    res = np.zeros_like(state)
+    res[0] = dpi3k
+    res[1] = dakt
+    res[2] = dmtor
+    
+    # Any additional species (like AMPK) just have basal decay in this specific model
+    if len(state) > 3:
+        for i in range(3, len(state)):
+            # Generic decay for unspecified species
+            res[i] = 0.1 * (0.5 - state[i])
+
+    return res
 
 
 @njit
@@ -54,7 +66,7 @@ def langevin_step(state, dt, params, noise_scale, feedback=None):
     One step of SDE integration using the Milstein scheme for better stability.
     Uses state-dependent noise to ensure biological plausibility near [0, 1] boundaries.
     """
-    drift = default_drift_fn(state, params, feedback=feedback)
+    drift = pi3k_akt_mtor_drift(state, params, feedback=feedback)
     
     # Random term
     dw = np.random.normal(0, 1.0, size=len(state)) * np.sqrt(dt)
@@ -72,7 +84,9 @@ def langevin_step(state, dt, params, noise_scale, feedback=None):
     # Milstein term: 0.5 * b(x) * b'(x) * (dw^2 - dt)
     # b'(x) = noise_scale * (1 - 2x) / (2 * sqrt(x * (1 - x)))
     # b(x) * b'(x) = noise_scale^2 * (1 - 2x) / 2
-    milstein_corr = 0.5 * (noise_scale**2) * (1.0 - 2.0 * clamped_state) * (dw**2 - dt)
+    # Milstein term = 0.5 * [noise_scale^2 * (1 - 2x) / 2] * (dw^2 - dt)
+    #               = 0.25 * noise_scale^2 * (1 - 2x) * (dw^2 - dt)
+    milstein_corr = 0.25 * (noise_scale**2) * (1.0 - 2.0 * clamped_state) * (dw**2 - dt)
 
     # Update state
     new_state = state + drift * dt + b * dw + milstein_corr
@@ -104,7 +118,7 @@ def create_langevin_integrator(drift_fn):
             clamped_state[i] = max(eps, min(1.0 - eps, state[i]))
             
         b = noise_scale * np.sqrt(clamped_state * (1.0 - clamped_state))
-        milstein_corr = 0.5 * (noise_scale**2) * (1.0 - 2.0 * clamped_state) * (dw**2 - dt)
+        milstein_corr = 0.25 * (noise_scale**2) * (1.0 - 2.0 * clamped_state) * (dw**2 - dt)
 
         # Update state
         new_state = state + drift * dt + b * dw + milstein_corr

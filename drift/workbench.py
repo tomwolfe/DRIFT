@@ -16,6 +16,7 @@ from typing import Dict, Any, List, Optional, Union
 logger = logging.getLogger(__name__)
 
 # Global cache for workers to avoid reloading model
+# Key format: (model_name, topology_name, bridge_hash)
 _worker_cache: Dict[str, Any] = {}
 
 
@@ -25,11 +26,16 @@ def _init_worker(model_name, topology=None, bridge=None):
         from .topology import get_default_topology
         eff_topology = topology or get_default_topology()
         
-        if "solver" not in _worker_cache:
-            _worker_cache["solver"] = DFBASolver(model_name=model_name)
-            _worker_cache["integrator"] = StochasticIntegrator(dt=0.1, noise_scale=0.03, topology=eff_topology)
-            _worker_cache["bridge"] = bridge or MetabolicBridge(species_names=eff_topology.species)
-            logger.info(f"Worker {os.getpid()} initialized with model: {model_name}")
+        # Create a unique key for this configuration
+        cache_key = (model_name, eff_topology.name)
+        
+        if cache_key not in _worker_cache:
+            _worker_cache[cache_key] = {
+                "solver": DFBASolver(model_name=model_name),
+                "integrator": StochasticIntegrator(dt=0.1, noise_scale=0.03, topology=eff_topology),
+                "bridge": bridge or MetabolicBridge(species_names=eff_topology.species)
+            }
+            logger.info(f"Worker {os.getpid()} initialized with model: {model_name}, topology: {eff_topology.name}")
     except Exception as e:
         logger.error(f"Failed to initialize worker with model {model_name}: {str(e)}")
         raise
@@ -42,15 +48,17 @@ def _single_sim_wrapper(args):
     try:
         from .topology import get_default_topology
         eff_topology = topology or get_default_topology()
+        cache_key = (model_name, eff_topology.name)
 
         # Reuse cached components if they exist
-        if "solver" in _worker_cache:
-            solver = _worker_cache["solver"]
-            integrator = _worker_cache["integrator"]
-            sim_bridge = bridge or _worker_cache["bridge"]
+        if cache_key in _worker_cache:
+            cached = _worker_cache[cache_key]
+            solver = cached["solver"]
+            integrator = cached["integrator"]
+            sim_bridge = bridge or cached["bridge"]
             binding = BindingEngine(kd=drug_kd)
         else:
-            # Fallback for non-pool execution
+            # Fallback for non-pool execution or if init_worker missed this key
             binding = BindingEngine(kd=drug_kd)
             integrator = StochasticIntegrator(dt=0.1, noise_scale=0.03, topology=eff_topology)
             sim_bridge = bridge or MetabolicBridge(species_names=eff_topology.species)
