@@ -90,16 +90,22 @@ class StochasticIntegrator:
             raise ValueError(
                 f"state must be a numpy array of shape ({len(self.topology.species)},), got {type(state)} with shape {getattr(state, 'shape', 'N/A')}"
             )
-        
+
+        # Validate inhibition parameter
+        if not (0 <= inhibition <= 1):
+            raise ValueError(
+                f"inhibition must be between 0 and 1, got {inhibition}"
+            )
+
         # Performance optimization: if using default topology, use jitted function
         if self.topology.name == "PI3K_AKT_mTOR":
             params = np.concatenate((self.base_params, [inhibition]))
             return langevin_step(state, self.dt, params, self.noise_scale)
-        
+
         # Custom topology with provided drift_fn
         if self.topology.drift_fn is not None:
             return self._custom_step(state, inhibition)
-            
+
         # Fallback to generic decay
         return self._generic_step(state, inhibition)
 
