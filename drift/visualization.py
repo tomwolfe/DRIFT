@@ -146,38 +146,40 @@ def create_dashboard(results):
     )
 
     # Update Axes
-    fig.update_xaxes(title_text="Time", row=1, col=1)
-    fig.update_xaxes(title_text="Perturbed Kd", row=1, col=2)
-    fig.update_xaxes(title_text="Time", row=2, col=1)
-    fig.update_xaxes(title_text="Time", row=2, col=2)
-
-    fig.update_yaxes(title_text="Activity (Norm)", row=1, col=1)
-    fig.update_yaxes(title_text="Growth (%)", row=1, col=2)
-    fig.update_yaxes(title_text="Growth (%)", row=2, col=1)
-    fig.update_yaxes(title_text="Growth (%)", row=2, col=2)
-
-    fig.update_layout(
-        height=800,
-        title_text="<b>DRIFT: Multi-Scale Stochastic Research Workbench</b><br>Pareto-Optimized Decision Support Dashboard",
-        template="plotly_white",
-        legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.02),
-        margin=dict(r=200, t=100)
+    # Help Annotation for New Users
+    fig.add_annotation(
+        text=(f"<b>How to Read This Dashboard</b><br>"
+              f"• <b>Top Left:</b> Temporal signaling response. Proteins should stabilize.<br>"
+              f"• <b>Top Right:</b> Sensitivity of growth to drug affinity (Kd).<br>"
+              f"• <b>Bottom Left:</b> Individual cell trajectories showing stochastic drift.<br>"
+              f"• <b>Bottom Right:</b> Statistical envelope of the population phenotype."),
+        xref="paper", yref="paper",
+        x=1.15, y=0.1,
+        showarrow=False,
+        align="left",
+        bgcolor="rgba(230,240,255,0.9)",
+        bordercolor="blue",
+        borderwidth=1,
+        borderpad=10
     )
 
-    return fig
-
     # Update Axes
-    fig.update_xaxes(title_text="Time (arbitrary units)", row=3, col=1)
-    fig.update_yaxes(title_text="Normalized Activity", row=1, col=1)
-    fig.update_yaxes(title_text="Growth Rate", row=2, col=1)
-    fig.update_yaxes(title_text="Ensemble Growth Rate", row=3, col=1)
+    fig.update_xaxes(title_text="Time (Integration Steps)", row=1, col=1)
+    fig.update_xaxes(title_text="Binding Affinity (Kd)", row=1, col=2)
+    fig.update_xaxes(title_text="Time (Integration Steps)", row=2, col=1)
+    fig.update_xaxes(title_text="Time (Integration Steps)", row=2, col=2)
+
+    fig.update_yaxes(title_text="Protein Activity [0,1]", row=1, col=1)
+    fig.update_yaxes(title_text="Final Growth (% Basal)", row=1, col=2)
+    fig.update_yaxes(title_text="Growth Rate (% Basal)", row=2, col=1)
+    fig.update_yaxes(title_text="Ensemble Growth (% Basal)", row=2, col=2)
 
     fig.update_layout(
-        height=900,
-        title_text="<b>DRIFT: Multi-Scale Stochastic Research Workbench</b><br>Drug-Target Interaction Propagation (PI3K/AKT/mTOR Axis)",
+        height=850,
+        title_text="<b>DRIFT: Multi-Scale Stochastic Research Workbench</b><br>Multi-Scale Phenotypic Response Dashboard",
         template="plotly_white",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        margin=dict(r=150) # Make room for annotation
+        legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.02),
+        margin=dict(r=250, t=100) # Increased right margin for annotations
     )
 
     return fig

@@ -4,21 +4,21 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
-DRIFT (**D**rug-target **R**esponse **I**ntegrated **F**lux **T**rajectory) is a multi-scale stochastic framework designed to bridge the gap between molecular binding events and systemic metabolic phenotypes. It enables researchers to simulate how drug-induced signaling perturbations propagate through cellular networks to manifest as metabolic drift.
+DRIFT (**D**rug-target **R**esponse **I**ntegrated **F**lux **T**rajectory) is a multi-scale stochastic framework designed to bridge the gap between molecular binding events and systemic metabolic phenotypes.
+
+## ❓ Why DRIFT?
+
+In drug discovery, linking a molecular binding event to a systemic outcome (like growth inhibition) is often treated as a "black box." DRIFT provides a transparent, mechanistic bridge by:
+1.  **Capturing Temporal Dynamics:** Moving beyond static $IC_{50}$ values to see how responses evolve.
+2.  **Accounting for Stochasticity:** Modeling the "drift" in metabolic states caused by intrinsic cellular noise.
+3.  **Integrating Scales:** Coupling pharmacokinetics (Binding), pharmacodynamics (Signaling), and phenotype (Metabolism) in a single unified solver.
 
 ## 🌟 Key Features
 
 - **Multi-Scale Integration:** Seamlessly couples molecular binding, stochastic signaling (SDEs), and dynamic flux balance analysis (dFBA).
-- **Stochastic Dynamics:** Captures cellular heterogeneity using Langevin Dynamics solvers accelerated by Numba.
+- **Stochastic Dynamics:** Captures cellular heterogeneity using Langevin Dynamics solvers accelerated by **Numba**.
 - **Monte Carlo Uncertainty:** Built-in support for ensemble simulations to assess model robustness and parameter sensitivity.
-- **Interactive Dashboards:** Generates comprehensive HTML reports using Plotly for deep-dive analysis of trajectories.
-- **Extensible Architecture:** Modular design allows for swapping metabolic models or signaling topologies.
-
-## 🏗️ Architecture
-
-1.  **Molecular Proxy (`BindingEngine`):** Models target occupancy using a probabilistic Hill Equation based on drug concentration and binding affinity ($K_d$).
-2.  **Stochastic Signaling (`StochasticIntegrator`):** A high-performance Langevin Dynamics solver that simulates the PI3K/AKT/mTOR signaling axis with intrinsic Gaussian noise.
-3.  **Metabolic Phenotype (`DFBASolver`):** A Dynamic Flux Balance Analysis engine that translates signaling states into $V_{max}$ constraints on metabolic reconstructions (e.g., COBRA models).
+- **Interactive Dashboards:** Generates comprehensive HTML reports using **Plotly** for deep-dive analysis of trajectories.
 
 ## 🚀 Quick Start
 
@@ -35,55 +35,46 @@ pip install -e .
 
 ### Run Your First Simulation
 
-You can run the workbench via the CLI or use it as a library.
-
-**CLI Usage:**
-```bash
-python main.py --drug-kd 0.5 --drug-conc 1.0 --mc-iterations 20
-```
-
-**Library Usage:**
 ```python
 from drift.workbench import Workbench
+from drift.visualization import create_dashboard
 
-# Initialize the workbench
+# 1. Initialize with drug parameters
 wb = Workbench(drug_kd=0.5, drug_concentration=1.0)
 
-# Run a single trajectory
-history = wb.run_simulation(steps=200)
+# 2. Run an ensemble of 20 simulations
+results = wb.run_monte_carlo(n_sims=20, steps=100)
 
-# Access results
-print(f"Final Growth Rate: {history['growth'][-1]}")
+# 3. Generate the interactive dashboard
+create_dashboard(results)
 ```
 
-## 📚 Examples & Tutorials
+## 📚 Documentation
 
-Check out the `examples/` directory for detailed usage:
+- [**System Architecture**](docs/architecture.md): Deep dive into the SDE solvers and FBA coupling.
+- [**Getting Started Tutorial**](docs/tutorial.md): A step-by-step guide for new users.
+- [**API Reference**](docs/modules.md): Detailed module and class documentation.
+- [**Validation & Benchmarks**](docs/validation.md): How we ensure scientific rigor.
+- [**Reproducibility Guide**](docs/reproducibility.md): Using Docker and configuration files.
 
-- [**Basic Simulation**](examples/basic_simulation.py): A walk-through of initializing the workbench and plotting signaling trajectories vs. metabolic output.
-- [**Parameter Sweep (Dose-Response)**](examples/parameter_sweep.py): Analyze how varying drug concentrations impact the steady-state growth rate of the model.
+## 🔬 Research & Validation
 
-## 🔬 Validation
-
-The DRIFT framework has been designed to reflect established biological principles:
-- **Signaling Inhibition:** Binding events correctly reduce the activation rate of downstream kinases (AKT, mTOR).
-- **Metabolic Coupling:** Reduced mTOR activity is mapped to decreased glucose transporter efficiency and protein synthesis bounds, mimicking the effects of rapalogs.
-- **Stochasticity:** The Langevin solver ensures that the metabolic "drift" captures the variance observed in single-cell population studies.
+The DRIFT framework is grounded in established biological principles, mapping signaling axis (PI3K/AKT/mTOR) to metabolic constraints (Glucose uptake/Protein synthesis). For more details on the numerical stability and biological consistency, see our [Validation Document](docs/validation.md).
 
 ## 🧪 Development and Testing
-
-The project uses `pytest` for unit testing and GitHub Actions for Continuous Integration.
 
 ```bash
 # Run the test suite
 pytest tests/
 ```
 
+## 📜 Citing DRIFT
+
+If you use DRIFT in your research, please cite it as:
+> Wolfe, T. (2025). DRIFT: A Multi-Scale Stochastic Framework for Predicting Drug-Induced Metabolic Drift. GitHub Repository. https://github.com/tomwolfe/DRIFT
+
 ## 🛠️ Technical Stack
 - **COBRApy:** Flux Balance Analysis.
 - **Numba:** JIT-compiled SDE solvers.
 - **Plotly:** Multi-scale visualization.
 - **Numpy/Scipy:** Numerical backend.
-
-## 📜 License
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
