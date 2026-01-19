@@ -7,6 +7,21 @@
 
 DRIFT (**D**rug-target **R**esponse **I**ntegrated **F**lux **T**rajectory) is a multi-scale stochastic framework designed to bridge the gap between molecular binding events and systemic metabolic phenotypes.
 
+## 📐 System Architecture
+
+DRIFT integrates three distinct biological scales into a unified simulation loop:
+
+```mermaid
+graph TD
+    A[Drug Concentration] -->|Hill Equation| B(BindingEngine)
+    B -->|Inhibition Factor| C(StochasticIntegrator)
+    C -->|Langevin Dynamics| D{Signaling State}
+    D -->|PI3K/AKT/mTOR| E(MetabolicBridge)
+    E -->|Vmax Constraints| F(DFBASolver)
+    F -->|FBA Optimization| G[Metabolic Fluxes & Growth]
+    G -->|Feedback/Recording| H[History/Dashboard]
+```
+
 ## ❓ Why DRIFT?
 
 In drug discovery, linking a molecular binding event to a systemic outcome (like growth inhibition) is often treated as a "black box." DRIFT provides a transparent, mechanistic bridge by:
@@ -22,83 +37,48 @@ In drug discovery, linking a molecular binding event to a systemic outcome (like
 - **Interactive Dashboards:** Generates comprehensive HTML reports using **Plotly** for deep-dive analysis of trajectories.
 - **Scientific Validation:** Benchmarked against known biological responses and numerical stability tests.
 
+## 📚 Documentation
+
+Detailed documentation is available in the `docs/` directory:
+
+| Document | Description |
+| --- | --- |
+| [**System Architecture**](docs/architecture.md) | Deep dive into the SDE solvers and FBA coupling. |
+| [**Getting Started Tutorial**](docs/tutorial.md) | A step-by-step guide for new users. |
+| [**Validation & Benchmarks**](docs/validation.md) | Quantitative comparison with published models. |
+| [**Scientific Validation**](docs/scientific_validation.md) | Detailed verification of biological principles. |
+| [**API Reference**](docs/api_reference.md) | Auto-generated class and method documentation. |
+| [**Reproducibility Guide**](docs/reproducibility.md) | Docker, Conda, and environment configuration. |
+| [**Tool Comparison**](docs/comparison_tools.md) | How DRIFT compares to DeepPurpose, COBRApy, etc. |
+
+## 🧪 Scientific Foundation
+
+DRIFT's modeling approach is grounded in established systems biology literature:
+
+- **Signaling Dynamics:** The PI3K/AKT/mTOR SDE model is inspired by the topology described in *Chen et al. (2009), "Input-output behavior of ErbB signaling pathways."*
+- **Metabolic Modeling:** Flux Balance Analysis (FBA) implementation follows the standard protocols in *Orth et al. (2010), "What is flux balance analysis?"*
+- **Multi-scale Coupling:** The integration of signaling and metabolism reflects recent advances in dynamic FBA as reviewed in *Reimers et al. (2021).*
+
 ## 🚀 Quick Start
 
 ### Installation
 
+**Using Pip:**
 ```bash
-# Clone the repository
-git clone https://github.com/tomwolfe/DRIFT.git
-cd DRIFT
-
-# Install as an editable package
 pip install -e .
 ```
 
-### Run Your First Simulation
-
-```python
-from drift.workbench import Workbench
-from drift.visualization import create_dashboard
-
-# 1. Initialize with drug parameters
-wb = Workbench(drug_kd=0.5, drug_concentration=1.0)
-
-# 2. Run an ensemble of 20 simulations
-results = wb.run_monte_carlo(n_sims=20, steps=100)
-
-# 3. Generate the interactive dashboard
-create_dashboard(results)
-```
-
-### Command Line Interface
-
-DRIFT also provides a command-line interface for quick simulations:
-
+**Using Conda:**
 ```bash
-# Run with default parameters
-python main.py
-
-# Run with custom parameters
-python main.py --drug-kd 0.3 --drug-conc 1.5 --mc-iterations 50
+conda env create -f environment.yml
+conda activate drift
 ```
 
-## 📊 Performance Benchmarks
-
-### Computational Efficiency
-- **Single Trajectory:** ~0.2 seconds for 100 time steps
-- **Monte Carlo Ensemble (50 sims):** ~8 seconds for 100 time steps
-- **Memory Usage:** ~50MB baseline, scales linearly with ensemble size
-
-### Biological Validation
-- **Dose-Response Curves:** Accurately reproduces sigmoidal $IC_{50}$ relationships
-- **Signaling Kinetics:** Matches experimental phosphoproteomics time courses
-- **Metabolic Constraints:** Aligns with published flux balance analysis studies
-
-For detailed benchmarking methodology, see our [Validation Document](docs/validation.md).
-
-## 🧪 Scientific Validation
-
-DRIFT's biological accuracy has been validated against:
-- **PI3K/mTOR Pathway Inhibition:** Reproduces known signaling cascade delays (PI3K → AKT → mTOR)
-- **Metabolic Shifts:** Captures glucose uptake changes consistent with rapalog treatments
-- **Cellular Heterogeneity:** Models single-cell variance within experimentally observed ranges
-- **Dose-Response Relationships:** Exhibits sigmoidal curves consistent with pharmacological theory
-- **Numerical Stability:** Demonstrates convergence with decreasing time steps
-
-See our [Validation & Benchmarks](docs/validation.md) document for detailed comparisons with published data, and our [Scientific Validation](docs/scientific_validation.md) for comprehensive testing results.
-
-## 📚 Documentation
-
-- [**System Architecture**](docs/architecture.md): Deep dive into the SDE solvers and FBA coupling.
-- [**Getting Started Tutorial**](docs/tutorial.md): A step-by-step guide for new users.
-- [**API Reference**](docs/api_reference.md): Detailed module and class documentation.
-- [**Module Documentation**](docs/modules.md): Technical overview of internal modules.
-- [**Validation & Benchmarks**](docs/validation.md): How we ensure scientific rigor.
-- [**Scientific Validation**](docs/scientific_validation.md): Comprehensive validation tests and results.
-- [**Tool Comparison**](docs/comparison_tools.md): Comparison with existing computational tools.
-- [**Reproducibility Guide**](docs/reproducibility.md): Using Docker and configuration files.
-- [**Example Workflows**](examples/): Real-world usage scenarios and case studies.
+**Using Docker:**
+```bash
+docker build -t drift .
+docker run -it drift
+```
 
 ## 🧪 Development and Testing
 
@@ -128,6 +108,13 @@ Running a typical simulation produces:
 - Parameter sensitivity reports
 
 ![Sample Dashboard](assets/sample_output.png)
+
+## 🗺️ Project Roadmap
+
+- [x] **v0.1.0:** Initial engine release & Monte Carlo integration.
+- [ ] **v0.2.0:** Support for multi-target inhibition (Polypharmacology).
+- [ ] **v0.3.0:** Integration with SBML models for custom signaling topologies.
+- [ ] **v1.0.0:** Stable release with full experimental dataset benchmarking.
 
 ## 🤝 Contributing
 

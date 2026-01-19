@@ -1,0 +1,21 @@
+name: drift
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python>=3.10
+  - pip
+  - numpy
+  - scipy
+  - pandas
+  - tqdm
+  - plotly
+  - numba
+  - pip:
+      - cobra
+      - optlang
+      - pytest
+      - pytest-cov
+      - flake8
+      - black
+      - mypy
