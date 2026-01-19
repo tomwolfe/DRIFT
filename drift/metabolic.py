@@ -39,10 +39,11 @@ class MetabolicBridge:
         """
         if mappings is None:
             # Default: mTOR increases glucose uptake capacity
+            # REMOVED protein_idx: 2 to prevent silent mapping errors.
+            # Name-based lookup is now the enforced default.
             self.mappings: List[Dict[str, Any]] = [
                 {
                     "protein_name": "mTOR",
-                    "protein_idx": 2,  # Keep for backward compatibility with default 3-species model
                     "reaction_id": "EX_glc__D_e",
                     "influence": "positive",
                     "base_vmax": 10.0,
@@ -189,12 +190,18 @@ class MetabolicBridge:
             influence: str = map_config.get("influence", "positive")
             mapping_fn = map_config.get("mapping_fn")
 
-            # Resolve name to index if possible
-            if name is not None and self.species_names is not None:
-                if name in self.species_names:
-                    idx = self.species_names.index(name)
-                else:
-                    logger.warning(f"Protein name '{name}' not found in species_names {self.species_names}")
+            # Resolve name to index (Enforced Default)
+            if name is not None:
+                if self.species_names is not None:
+                    if name in self.species_names:
+                        idx = self.species_names.index(name)
+                    else:
+                        raise ValueError(f"Protein name '{name}' not found in species_names {self.species_names}. "
+                                         "Ensure your Topology matches your MetabolicBridge.")
+                elif idx is None:
+                    # No species names and no index provided
+                    raise ValueError(f"Protein name '{name}' provided but MetabolicBridge has no 'species_names' "
+                                     "to resolve it, and no 'protein_idx' was specified.")
 
             if idx is None or not (0 <= idx < state_len):
                 logger.warning(f"Invalid protein index {idx} (name: {name}) for state of length {state_len}, skipping mapping")
@@ -344,18 +351,25 @@ class BridgeBuilder:
 class DFBASolver:
     """Dynamic Flux Balance Analysis solver."""
 
-    def __init__(self, model_name="textbook"):
+    def __init__(self, model_name="textbook", strict=False):
         """
         Initialize the DFBASolver.
 
         Args:
             model_name (str): Name of the metabolic model to use
+            strict (bool): If True, raises an error if no LP solver is found.
         """
         self.model_name = model_name
+        self.strict = strict
         self.available_solvers = self._check_solver()
         
         # Headless mode: If no solvers, don't attempt to load or validate
         if not self.available_solvers:
+            if self.strict:
+                raise RuntimeError(
+                    "DFBASolver: No LP solver found and 'strict' mode is enabled. "
+                    "Install GLPK (pip install swiglpk) or another COBRA-compatible solver."
+                )
             logger.warning(f"DFBASolver initialized in HEADLESS mode (no solver found). FBA will be disabled.")
             self.model = None
             return
@@ -521,6 +535,8 @@ class DFBASolver:
         Solves FBA with specific constraints and provides diagnostics on failure.
         """
         if not self.model:
+            if self.strict:
+                raise RuntimeError("DFBASolver: Attempted to solve FBA in strict mode with no available solver.")
             # Headless mode: return a dummy result
             return {
                 "objective_value": 0.0,

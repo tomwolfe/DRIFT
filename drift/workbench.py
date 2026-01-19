@@ -244,10 +244,18 @@ class Workbench:
         if steps <= 0:
             raise ValueError(f"steps must be positive, got {steps}")
 
-        if n_sims * steps > 100000 and not (export_to or return_generator):
+        # Memory Safety Enforcement
+        total_data_points = n_sims * steps
+        if total_data_points > 1_000_000 and not (export_to or return_generator):
+            raise MemoryError(
+                f"Simulation ensemble is too large to collect in memory ({total_data_points} data points). "
+                "To prevent OutOfMemory errors, you MUST use return_generator=True or "
+                "provide an export_to='path.parquet' for incremental disk writing."
+            )
+        elif total_data_points > 100_000 and not (export_to or return_generator):
             logger.warning(
-                f"Large simulation ensemble ({n_sims} sims * {steps} steps) may cause "
-                "memory issues. Consider using export_to='path.parquet' or return_generator=True."
+                f"Large simulation ensemble ({total_data_points} data points) may cause "
+                "memory pressure. Consider using export_to or return_generator."
             )
 
         print(f"[*] Establishing basal phenotypic baseline...")
