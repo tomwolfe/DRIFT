@@ -48,6 +48,7 @@ dependencies = [
 [project.optional-dependencies]
 sbml = [
     "python-libsbml>=5.19.0",
+    "libroadrunner>=2.1.0",
 ]
 dev = [
     "pytest>=6.0",

@@ -3,6 +3,7 @@ import pandas as pd
 from .binding import BindingEngine
 from .signaling import StochasticIntegrator
 from .metabolic import MetabolicBridge, DFBASolver
+from .engine import SimulationEngine
 
 from concurrent.futures import ProcessPoolExecutor
 import multiprocessing as mp
@@ -24,23 +25,28 @@ def _get_bridge_hash(bridge: Optional[MetabolicBridge]) -> int:
     """Generates a stable hash for a MetabolicBridge configuration."""
     if bridge is None:
         return 0
-    # Simple hash based on mappings and reverse_mappings
+    
+    # Extract structural data for hashing
     try:
-        # Use json.dumps for a stable string representation, though we need to handle potential non-serializable mapping_fn
-        # For Pareto, we'll just hash the core structure
         mapping_data = []
-        if hasattr(bridge, 'mappings'):
+        if hasattr(bridge, "mappings"):
             for m in bridge.mappings:
-                # Copy and remove non-serializable
-                m_copy = m.copy()
-                if 'mapping_fn' in m_copy:
-                    m_copy['mapping_fn'] = str(m_copy['mapping_fn'])
+                m_copy = {k: (str(v) if callable(v) else v) for k, v in m.items()}
                 mapping_data.append(m_copy)
         
-        rev_mapping_data = getattr(bridge, 'reverse_mappings', [])
-        return hash(json.dumps([mapping_data, rev_mapping_data], sort_keys=True))
-    except Exception:
-        return id(bridge)
+        rev_mapping_data = []
+        if hasattr(bridge, "reverse_mappings"):
+            for rm in bridge.reverse_mappings:
+                rm_copy = {k: (str(v) if callable(v) else v) for k, v in rm.items()}
+                rev_mapping_data.append(rm_copy)
+        
+        # Use a deterministic string representation for hashing
+        hash_str = json.dumps([mapping_data, rev_mapping_data], sort_keys=True)
+        import hashlib
+        return int(hashlib.md5(hash_str.encode()).hexdigest(), 16)
+    except Exception as e:
+        logger.warning(f"Failed to generate deterministic hash for bridge: {e}. Falling back to config hash.")
+        return hash(str(getattr(bridge, "__dict__", "")))
 
 
 def _init_worker(model_name, topology=None, bridge=None):
@@ -90,96 +96,20 @@ def _single_sim_wrapper(args):
             sim_bridge = bridge or MetabolicBridge(species_names=eff_topology.species)
             solver = DFBASolver(model_name=model_name)
 
-        # Apply custom signaling parameters if provided
-        if custom_params:
-            for i, (p_name, p_val) in enumerate(eff_topology.parameters.items()):
-                if p_name in custom_params:
-                    integrator.base_params[i] = custom_params[p_name]
+        engine = SimulationEngine(
+            integrator=integrator,
+            solver=solver,
+            bridge=sim_bridge,
+            binding=binding
+        )
 
-        inhibition = binding.calculate_inhibition(drug_concentration)
-        
-        # Initial state from topology
-        state = integrator.topology.get_initial_state()
-        feedback = np.ones(len(eff_topology.species))  # Initial vector feedback
-
-        history = {
-            "time": np.arange(steps) * integrator.dt,
-            "signaling": [],
-            "growth": [],
-            "status": [],
-            "cell_death": False,
-            "death_step": None,
-            "inhibition": inhibition,
-            "drug_kd": drug_kd,
-            "params": custom_params or {},
-        }
-
-        dt_small = integrator.dt / sub_steps
-
-        for step in range(steps):
-            if history["cell_death"]:
-                # Once dead, stay dead
-                history["signaling"].append(state.copy())
-                history["growth"].append(0.0)
-                history["status"].append("dead")
-                continue
-
-            state_old = state.copy()
-            feedback_old = feedback.copy()
-
-            # 1. Predictor signaling step
-            for _ in range(sub_steps):
-                orig_dt = integrator.dt
-                integrator.dt = dt_small
-                state = integrator.step(state, inhibition, feedback=feedback)
-                integrator.dt = orig_dt
-            
-            # 2. Metabolic mapping (Signaling -> Metabolism)
-            constraints = sim_bridge.get_constraints(state)
-            
-            # 3. FBA solver
-            fba_result = solver.solve_step(constraints)
-            
-            if refine_feedback and fba_result["status"] == "optimal":
-                # Predictor-Corrector: 
-                # Use predicted feedback to re-run signaling for better accuracy
-                feedback_pred = sim_bridge.get_feedback(fba_result["fluxes"])
-                avg_feedback = (feedback_old + feedback_pred) / 2.0
-                
-                # Reset and correct signaling
-                state = state_old.copy()
-                for _ in range(sub_steps):
-                    orig_dt = integrator.dt
-                    integrator.dt = dt_small
-                    state = integrator.step(state, inhibition, feedback=avg_feedback)
-                    integrator.dt = orig_dt
-                
-                # Re-run FBA with corrected state
-                constraints = sim_bridge.get_constraints(state)
-                fba_result = solver.solve_step(constraints)
-
-            growth = fba_result["objective_value"]
-            fluxes = fba_result["fluxes"]
-            status = fba_result["status"]
-
-            if status != "optimal":
-                history["cell_death"] = True
-                history["death_step"] = step
-                diag = fba_result.get("diagnostic", "Unknown constraint")
-                logger.warning(f"Cell death detected at step {step} (FBA status: {status}). Cause: {diag}")
-                history["death_cause"] = diag
-                growth = 0.0
-                feedback = np.zeros(len(eff_topology.species))  # Total metabolic collapse
-            else:
-                feedback = sim_bridge.get_feedback(fluxes)
-
-            history["signaling"].append(state.copy())
-            history["growth"].append(growth)
-            history["status"].append(status)
-
-        history["signaling"] = np.array(history["signaling"])
-        history["growth"] = np.array(history["growth"])
-        return history
+        return engine.run(
+            steps=steps,
+            drug_concentration=drug_concentration,
+            sub_steps=sub_steps,
+            refine_feedback=refine_feedback,
+            custom_params=custom_params
+        )
     except Exception as e:
         logger.error(f"Error in single simulation: {str(e)}")
         raise
@@ -435,9 +365,9 @@ class Workbench:
             data.append(row)
         
         df = pd.DataFrame(data)
-        correlations = df.corr()["growth"].drop("growth").sort_values(ascending=False)
+        correlations = df.corr(method="spearman")["growth"].drop("growth").sort_values(ascending=False)
         
-        print("\n[+] Sensitivity Analysis Results (Correlation with Growth):")
+        print("\n[+] Sensitivity Analysis Results (Spearman Correlation with Growth):")
         for param, corr in correlations.items():
             print(f"    - {param:20}: {corr: .4f}")
             
