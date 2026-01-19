@@ -1,5 +1,6 @@
 import numpy as np
 
+
 class BindingEngine:
     """Calculates protein inhibition percentage based on Kd and [Drug]."""
 
@@ -17,7 +18,9 @@ class BindingEngine:
         if kd <= 0:
             raise ValueError(f"kd must be positive, got {kd}")
         if hill_coefficient <= 0:
-            raise ValueError(f"hill_coefficient must be positive, got {hill_coefficient}")
+            raise ValueError(
+                f"hill_coefficient must be positive, got {hill_coefficient}"
+            )
 
         self.kd = kd
         self.hill_coefficient = hill_coefficient
@@ -33,14 +36,16 @@ class BindingEngine:
             float: Fraction of target bound by drug [0, 1]
         """
         if drug_concentration < 0:
-            raise ValueError(f"drug_concentration must be non-negative, got {drug_concentration}")
+            raise ValueError(
+                f"drug_concentration must be non-negative, got {drug_concentration}"
+            )
 
         if drug_concentration == 0:
             return 0.0
 
         # Hill Equation: theta = [D]^n / ([D]^n + Kd^n)
-        numerator = drug_concentration ** self.hill_coefficient
-        denominator = numerator + self.kd ** self.hill_coefficient
+        numerator = drug_concentration**self.hill_coefficient
+        denominator = numerator + self.kd**self.hill_coefficient
         return numerator / denominator
 
     def calculate_inhibition(self, drug_concentration: float) -> float:

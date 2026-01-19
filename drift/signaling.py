@@ -1,6 +1,7 @@
 import numpy as np
 from numba import njit
 
+
 @njit
 def langevin_step(state, dt, params, noise_scale):
     """
@@ -9,7 +10,15 @@ def langevin_step(state, dt, params, noise_scale):
     params: [k_pi3k_base, k_pi3k_deg, k_akt_act, k_akt_deact, k_mtor_act, k_mtor_deact, inhibition]
     """
     pi3k, akt, mtor = state
-    k_pi3k_base, k_pi3k_deg, k_akt_act, k_akt_deact, k_mtor_act, k_mtor_deact, inhibition = params
+    (
+        k_pi3k_base,
+        k_pi3k_deg,
+        k_akt_act,
+        k_akt_deact,
+        k_mtor_act,
+        k_mtor_deact,
+        inhibition,
+    ) = params
 
     # Drug inhibits PI3K activity/availability
     effective_pi3k = pi3k * (1.0 - inhibition)
@@ -31,10 +40,13 @@ def langevin_step(state, dt, params, noise_scale):
 
     # Physical constraints: proteins stay in [0, 1] range (normalized)
     for i in range(3):
-        if new_state[i] < 0: new_state[i] = 0
-        if new_state[i] > 1: new_state[i] = 1
+        if new_state[i] < 0:
+            new_state[i] = 0
+        if new_state[i] > 1:
+            new_state[i] = 1
 
     return new_state
+
 
 class StochasticIntegrator:
     """Integrator for stochastic differential equations in signaling pathways."""
@@ -58,14 +70,16 @@ class StochasticIntegrator:
         self.dt = dt
         self.noise_scale = noise_scale
         # Default kinetic parameters
-        self.base_params = np.array([
-            0.1,  # k_pi3k_base
-            0.1,  # k_pi3k_deg
-            0.5,  # k_akt_act
-            0.1,  # k_akt_deact
-            0.5,  # k_mtor_act
-            0.1   # k_mtor_deact
-        ])
+        self.base_params = np.array(
+            [
+                0.1,  # k_pi3k_base
+                0.1,  # k_pi3k_deg
+                0.5,  # k_akt_act
+                0.1,  # k_akt_deact
+                0.5,  # k_mtor_act
+                0.1,  # k_mtor_deact
+            ]
+        )
 
     def step(self, state, inhibition):
         """
@@ -79,7 +93,9 @@ class StochasticIntegrator:
             np.ndarray: Updated state after one step
         """
         if not isinstance(state, np.ndarray) or state.shape != (3,):
-            raise ValueError(f"state must be a numpy array of shape (3,), got {type(state)} with shape {getattr(state, 'shape', 'N/A')}")
+            raise ValueError(
+                f"state must be a numpy array of shape (3,), got {type(state)} with shape {getattr(state, 'shape', 'N/A')}"
+            )
         if not (0 <= inhibition <= 1):
             raise ValueError(f"inhibition must be between 0 and 1, got {inhibition}")
 

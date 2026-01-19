@@ -6,6 +6,7 @@ import logging
 # Configure logging
 logger = logging.getLogger(__name__)
 
+
 class MetabolicBridge:
     """Maps signaling protein concentrations to metabolic Vmax constraints."""
 
@@ -22,7 +23,12 @@ class MetabolicBridge:
         if mappings is None:
             # Default: mTOR (idx 2) increases glucose uptake capacity
             self.mappings = [
-                {'protein_idx': 2, 'reaction_id': 'EX_glc__D_e', 'influence': 'positive', 'base_vmax': 10.0}
+                {
+                    "protein_idx": 2,
+                    "reaction_id": "EX_glc__D_e",
+                    "influence": "positive",
+                    "base_vmax": 10.0,
+                }
             ]
         else:
             self.mappings = mappings
@@ -37,16 +43,21 @@ class MetabolicBridge:
         Returns:
             dict: Dictionary mapping reaction IDs to constraint values
         """
-        if not isinstance(signaling_state, (list, tuple, np.ndarray)) or len(signaling_state) != 3:
-            raise ValueError(f"signaling_state must be a list, tuple, or array of length 3, got {signaling_state}")
+        if (
+            not isinstance(signaling_state, (list, tuple, np.ndarray))
+            or len(signaling_state) != 3
+        ):
+            raise ValueError(
+                f"signaling_state must be a list, tuple, or array of length 3, got {signaling_state}"
+            )
 
         constraints = {}
 
         for map_config in self.mappings:
-            idx = map_config['protein_idx']
-            rxn_id = map_config['reaction_id']
-            base_vmax = map_config.get('base_vmax', 10.0)
-            influence = map_config.get('influence', 'positive')
+            idx = map_config["protein_idx"]
+            rxn_id = map_config["reaction_id"]
+            base_vmax = map_config.get("base_vmax", 10.0)
+            influence = map_config.get("influence", "positive")
 
             if not (0 <= idx < 3):
                 logger.warning(f"Invalid protein index {idx}, skipping mapping")
@@ -55,10 +66,12 @@ class MetabolicBridge:
             protein_level = signaling_state[idx]
 
             if not (0 <= protein_level <= 1):
-                logger.warning(f"Protein level {protein_level} out of range [0,1], clamping")
+                logger.warning(
+                    f"Protein level {protein_level} out of range [0,1], clamping"
+                )
                 protein_level = max(0, min(1, protein_level))
 
-            if influence == 'positive':
+            if influence == "positive":
                 # Scaling factor: 0.1 basal to 1.0 max
                 scaling = 0.1 + 0.9 * protein_level
             else:
@@ -67,14 +80,15 @@ class MetabolicBridge:
 
             # COBRA exchange reactions: Flux > -UB (uptake)
             # We scale the magnitude of the negative lower bound.
-            constraints[rxn_id] = - (base_vmax * scaling)
+            constraints[rxn_id] = -(base_vmax * scaling)
 
         return constraints
+
 
 class DFBASolver:
     """Dynamic Flux Balance Analysis solver."""
 
-    def __init__(self, model_name='textbook'):
+    def __init__(self, model_name="textbook"):
         """
         Initialize the DFBASolver.
 
@@ -100,10 +114,12 @@ class DFBASolver:
             logger.info(f"Successfully loaded model: {name}")
             return model
         except Exception as e:
-            logger.warning(f"Failed to load model '{name}': {str(e)}. Attempting fallbacks...")
+            logger.warning(
+                f"Failed to load model '{name}': {str(e)}. Attempting fallbacks..."
+            )
 
             # Try common model names as fallbacks
-            fallback_models = ['e_coli_core', 'textbook']
+            fallback_models = ["e_coli_core", "textbook"]
             if name in fallback_models:
                 fallback_models.remove(name)  # Don't retry the same failed name
 
@@ -114,13 +130,17 @@ class DFBASolver:
                     logger.info(f"Successfully loaded fallback model: {fallback_name}")
                     return model
                 except Exception as fallback_error:
-                    logger.warning(f"Failed to load fallback model '{fallback_name}': {str(fallback_error)}")
+                    logger.warning(
+                        f"Failed to load fallback model '{fallback_name}': {str(fallback_error)}"
+                    )
                     continue
 
             # If all attempts fail, raise a more informative error
-            error_msg = (f"Could not load requested model '{name}' or any fallback models. "
-                        f"Please ensure the model name is valid and the model is available. "
-                        f"Common valid models include: 'textbook', 'e_coli_core'.")
+            error_msg = (
+                f"Could not load requested model '{name}' or any fallback models. "
+                f"Please ensure the model name is valid and the model is available. "
+                f"Common valid models include: 'textbook', 'e_coli_core'."
+            )
             logger.critical(error_msg)
             raise RuntimeError(error_msg) from e
 
@@ -135,7 +155,9 @@ class DFBASolver:
             tuple: (objective_value, flux_dictionary)
         """
         if not isinstance(constraints, dict):
-            raise ValueError(f"constraints must be a dictionary, got {type(constraints)}")
+            raise ValueError(
+                f"constraints must be a dictionary, got {type(constraints)}"
+            )
 
         for rxn_id, lb in constraints.items():
             try:
@@ -147,10 +169,12 @@ class DFBASolver:
 
         try:
             solution = self.model.optimize()
-            if solution.status == 'optimal':
+            if solution.status == "optimal":
                 return solution.objective_value, solution.fluxes.to_dict()
             else:
-                logger.warning(f"FBA optimization returned non-optimal status: {solution.status}")
+                logger.warning(
+                    f"FBA optimization returned non-optimal status: {solution.status}"
+                )
                 return 0.0, {}
         except Exception as e:
             logger.error(f"FBA optimization failed: {e}")

@@ -15,16 +15,18 @@ logger = logging.getLogger(__name__)
 # Global cache for workers to avoid reloading model
 _worker_cache = {}
 
+
 def _init_worker(model_name):
     """Initializes a worker process by loading the model once."""
     try:
-        _worker_cache['solver'] = DFBASolver(model_name=model_name)
-        _worker_cache['integrator'] = StochasticIntegrator(dt=0.1, noise_scale=0.03)
-        _worker_cache['bridge'] = MetabolicBridge()
+        _worker_cache["solver"] = DFBASolver(model_name=model_name)
+        _worker_cache["integrator"] = StochasticIntegrator(dt=0.1, noise_scale=0.03)
+        _worker_cache["bridge"] = MetabolicBridge()
         logger.info(f"Worker initialized with model: {model_name}")
     except Exception as e:
         logger.error(f"Failed to initialize worker with model {model_name}: {str(e)}")
         raise
+
 
 def _single_sim_wrapper(args):
     """Helper to run a single simulation in a separate process."""
@@ -32,10 +34,10 @@ def _single_sim_wrapper(args):
 
     try:
         # Reuse cached components if they exist
-        if 'solver' in _worker_cache:
-            solver = _worker_cache['solver']
-            integrator = _worker_cache['integrator']
-            bridge = _worker_cache['bridge']
+        if "solver" in _worker_cache:
+            solver = _worker_cache["solver"]
+            integrator = _worker_cache["integrator"]
+            bridge = _worker_cache["bridge"]
             binding = BindingEngine(kd=drug_kd)
         else:
             # Fallback for non-pool execution
@@ -48,11 +50,11 @@ def _single_sim_wrapper(args):
         state = np.array([0.8, 0.8, 0.8])
 
         history = {
-            'time': np.arange(steps) * integrator.dt,
-            'signaling': [],
-            'growth': [],
-            'inhibition': inhibition,
-            'drug_kd': drug_kd
+            "time": np.arange(steps) * integrator.dt,
+            "signaling": [],
+            "growth": [],
+            "inhibition": inhibition,
+            "drug_kd": drug_kd,
         }
 
         for step in range(steps):
@@ -60,20 +62,21 @@ def _single_sim_wrapper(args):
             constraints = bridge.get_constraints(state)
             growth, _ = solver.solve_step(constraints)
 
-            history['signaling'].append(state.copy())
-            history['growth'].append(growth)
+            history["signaling"].append(state.copy())
+            history["growth"].append(growth)
 
-        history['signaling'] = np.array(history['signaling'])
-        history['growth'] = np.array(history['growth'])
+        history["signaling"] = np.array(history["signaling"])
+        history["growth"] = np.array(history["growth"])
         return history
     except Exception as e:
         logger.error(f"Error in single simulation: {str(e)}")
         raise
 
+
 class Workbench:
     """Multi-Scale Stochastic Research Workbench."""
 
-    def __init__(self, drug_kd=1.0, drug_concentration=2.0, model_name='textbook'):
+    def __init__(self, drug_kd=1.0, drug_concentration=2.0, model_name="textbook"):
         """
         Initialize the Workbench with specified parameters.
 
@@ -85,7 +88,9 @@ class Workbench:
         if drug_kd <= 0:
             raise ValueError(f"drug_kd must be positive, got {drug_kd}")
         if drug_concentration < 0:
-            raise ValueError(f"drug_concentration must be non-negative, got {drug_concentration}")
+            raise ValueError(
+                f"drug_concentration must be non-negative, got {drug_concentration}"
+            )
 
         self.binding = BindingEngine(kd=drug_kd)
         self.signaling = StochasticIntegrator(dt=0.1, noise_scale=0.03)
@@ -98,7 +103,7 @@ class Workbench:
         """Calculates growth rate without any drug inhibition."""
         args = (self.binding.kd, 0.0, steps, self.model_name)
         history = _single_sim_wrapper(args)
-        return np.mean(history['growth'])
+        return np.mean(history["growth"])
 
     def run_simulation(self, steps=100):
         """
@@ -146,20 +151,33 @@ class Workbench:
         sim_args = []
         for _ in range(n_sims):
             perturbed_kd = base_kd * np.random.uniform(0.8, 1.2)
-            sim_args.append((perturbed_kd, self.drug_concentration, steps, self.model_name))
+            sim_args.append(
+                (perturbed_kd, self.drug_concentration, steps, self.model_name)
+            )
 
         all_histories = []
         if n_jobs > 1:
             try:
-                with ProcessPoolExecutor(max_workers=n_jobs, initializer=_init_worker, initargs=(self.model_name,)) as executor:
+                with ProcessPoolExecutor(
+                    max_workers=n_jobs,
+                    initializer=_init_worker,
+                    initargs=(self.model_name,),
+                ) as executor:
                     if n_sims > 100:
-                        all_histories = list(tqdm(executor.map(_single_sim_wrapper, sim_args),
-                                                  total=len(sim_args), desc="Monte Carlo Simulations"))
+                        all_histories = list(
+                            tqdm(
+                                executor.map(_single_sim_wrapper, sim_args),
+                                total=len(sim_args),
+                                desc="Monte Carlo Simulations",
+                            )
+                        )
                     else:
-                        all_histories = list(executor.map(_single_sim_wrapper, sim_args))
+                        all_histories = list(
+                            executor.map(_single_sim_wrapper, sim_args)
+                        )
             except Exception as e:
                 logger.error(f"Error in multiprocessing: {str(e)}")
-                n_jobs = 1 # Fallback to sequential
+                n_jobs = 1  # Fallback to sequential
 
         if n_jobs <= 1:
             if n_sims > 100:
@@ -169,7 +187,4 @@ class Workbench:
                 for args in sim_args:
                     all_histories.append(_single_sim_wrapper(args))
 
-        return {
-            'histories': all_histories,
-            'basal_growth': basal_growth
-        }
+        return {"histories": all_histories, "basal_growth": basal_growth}

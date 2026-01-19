@@ -9,6 +9,7 @@ from drift.metabolic import MetabolicBridge, DFBASolver
 logging.getLogger("cobra").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
+
 class TestBindingEngine(unittest.TestCase):
     def test_occupancy(self):
         be = BindingEngine(kd=0.5)
@@ -41,7 +42,10 @@ class TestBindingEngine(unittest.TestCase):
         """Test that calculate_inhibition works correctly."""
         be = BindingEngine(kd=0.5)
         self.assertEqual(be.calculate_inhibition(0), 0)
-        self.assertAlmostEqual(be.calculate_inhibition(0.5), 0.5)  # Kd = conc => 50% inhibition
+        self.assertAlmostEqual(
+            be.calculate_inhibition(0.5), 0.5
+        )  # Kd = conc => 50% inhibition
+
 
 class TestSignaling(unittest.TestCase):
     def test_step_shape(self):
@@ -79,16 +83,17 @@ class TestSignaling(unittest.TestCase):
         with self.assertRaises(ValueError):
             si.step(np.array([0.8, 0.8, 0.8]), 1.1)  # Above 1
 
+
 class TestMetabolic(unittest.TestCase):
     def test_bridge_defaults(self):
         bridge = MetabolicBridge()
         # mTOR is index 2. If it's 1.0, scaling should be 1.0 -> -10.0
         constraints = bridge.get_constraints([0.5, 0.5, 1.0])
-        self.assertEqual(constraints['EX_glc__D_e'], -10.0)
+        self.assertEqual(constraints["EX_glc__D_e"], -10.0)
 
         # If mTOR is 0.0, scaling should be 0.1 -> -1.0
         constraints = bridge.get_constraints([0.5, 0.5, 0.0])
-        self.assertEqual(constraints['EX_glc__D_e'], -1.0)
+        self.assertEqual(constraints["EX_glc__D_e"], -1.0)
 
     def test_bridge_invalid_signaling_state(self):
         """Test that invalid signaling states raise errors."""
@@ -102,9 +107,16 @@ class TestMetabolic(unittest.TestCase):
 
     def test_bridge_invalid_protein_index(self):
         """Test that invalid protein indices are handled."""
-        bridge = MetabolicBridge(mappings=[
-            {'protein_idx': 5, 'reaction_id': 'EX_glc__D_e', 'influence': 'positive', 'base_vmax': 10.0}
-        ])
+        bridge = MetabolicBridge(
+            mappings=[
+                {
+                    "protein_idx": 5,
+                    "reaction_id": "EX_glc__D_e",
+                    "influence": "positive",
+                    "base_vmax": 10.0,
+                }
+            ]
+        )
         # Should handle invalid index gracefully
         constraints = bridge.get_constraints([0.5, 0.5, 0.5])
         # Since index 5 is invalid, no constraints should be added
@@ -112,22 +124,25 @@ class TestMetabolic(unittest.TestCase):
 
     def test_solver_fallback(self):
         # This might take a moment to download/load models
-        with self.assertLogs('drift.metabolic', level='WARNING') as cm:
-            solver = DFBASolver(model_name='non_existent_model')
-            self.assertEqual(solver.model.id, 'e_coli_core')
-        self.assertTrue(any("Failed to load model 'non_existent_model'" in msg for msg in cm.output))
+        with self.assertLogs("drift.metabolic", level="WARNING") as cm:
+            solver = DFBASolver(model_name="non_existent_model")
+            self.assertEqual(solver.model.id, "e_coli_core")
+        self.assertTrue(
+            any("Failed to load model 'non_existent_model'" in msg for msg in cm.output)
+        )
 
     def test_solver_optimize(self):
-        solver = DFBASolver(model_name='textbook')
-        growth, fluxes = solver.solve_step({'EX_glc__D_e': -10.0})
+        solver = DFBASolver(model_name="textbook")
+        growth, fluxes = solver.solve_step({"EX_glc__D_e": -10.0})
         self.assertGreater(growth, 0)
-        self.assertIn('EX_glc__D_e', fluxes)
+        self.assertIn("EX_glc__D_e", fluxes)
 
     def test_solver_invalid_constraints(self):
         """Test that invalid constraints raise errors."""
-        solver = DFBASolver(model_name='textbook')
+        solver = DFBASolver(model_name="textbook")
         with self.assertRaises(ValueError):
             solver.solve_step("invalid")  # Wrong type
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()

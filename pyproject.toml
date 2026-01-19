@@ -20,11 +20,6 @@ classifiers = [
     "Development Status :: 3 - Alpha",
 ]
 keywords = ["systems-biology", "metabolic-modeling", "fba", "stochastic-differential-equations", "drug-response"]
-
-[project.urls]
-"Homepage" = "https://github.com/tomwolfe/DRIFT"
-"Bug Tracker" = "https://github.com/tomwolfe/DRIFT/issues"
-"Documentation" = "https://github.com/tomwolfe/DRIFT#documentation"
 dependencies = [
     "cobra",
     "numpy",
@@ -34,6 +29,11 @@ dependencies = [
     "pandas",
     "tqdm",
 ]
+
+[project.urls]
+"Homepage" = "https://github.com/tomwolfe/DRIFT"
+"Bug Tracker" = "https://github.com/tomwolfe/DRIFT/issues"
+"Documentation" = "https://github.com/tomwolfe/DRIFT#documentation"
 
 [project.optional-dependencies]
 dev = [
