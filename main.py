@@ -2,6 +2,11 @@ from drift.workbench import Workbench
 from drift.visualization import create_dashboard
 import os
 import warnings
+import logging
+
+# Suppress cobra and httpx logging noise
+logging.getLogger("cobra").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # Suppress cobra warnings for cleaner output
 warnings.filterwarnings('ignore', category=UserWarning)

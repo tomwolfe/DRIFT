@@ -7,27 +7,55 @@ from concurrent.futures import ProcessPoolExecutor
 import os
 import cobra
 
-# Global cache for workers
-_worker_solver = None
+# Global cache for workers to avoid reloading model
+_worker_cache = {}
 
 def _init_worker(model_name):
     """Initializes a worker process by loading the model once."""
-    global _worker_solver
-    _worker_solver = DFBASolver(model_name=model_name)
+    global _worker_cache
+    _worker_cache['solver'] = DFBASolver(model_name=model_name)
+    _worker_cache['integrator'] = StochasticIntegrator(dt=0.1, noise_scale=0.03)
+    _worker_cache['bridge'] = MetabolicBridge()
 
 def _single_sim_wrapper(args):
     """Helper to run a single simulation in a separate process."""
     drug_kd, drug_concentration, steps, model_name = args
-    # Use the cached solver if available, otherwise create one (fallback)
-    global _worker_solver
-    if _worker_solver is None:
-        wb = Workbench(drug_kd=drug_kd, drug_concentration=drug_concentration, model_name=model_name)
+    global _worker_cache
+    
+    # Reuse cached components if they exist
+    if 'solver' in _worker_cache:
+        solver = _worker_cache['solver']
+        integrator = _worker_cache['integrator']
+        bridge = _worker_cache['bridge']
+        binding = BindingEngine(kd=drug_kd)
     else:
-        # Create a light workbench that reuses the process's solver
-        wb = Workbench(drug_kd=drug_kd, drug_concentration=drug_concentration, model_name=model_name)
-        wb.solver = _worker_solver
+        # Fallback for non-pool execution
+        binding = BindingEngine(kd=drug_kd)
+        integrator = StochasticIntegrator(dt=0.1, noise_scale=0.03)
+        bridge = MetabolicBridge()
+        solver = DFBASolver(model_name=model_name)
         
-    return wb.run_simulation(steps)
+    inhibition = binding.calculate_inhibition(drug_concentration)
+    state = np.array([0.8, 0.8, 0.8]) 
+    
+    history = {
+        'time': np.arange(steps) * integrator.dt,
+        'signaling': [],
+        'growth': [],
+        'inhibition': inhibition
+    }
+    
+    for _ in range(steps):
+        state = integrator.step(state, inhibition)
+        constraints = bridge.get_constraints(state)
+        growth, _ = solver.solve_step(constraints)
+        
+        history['signaling'].append(state.copy())
+        history['growth'].append(growth)
+        
+    history['signaling'] = np.array(history['signaling'])
+    history['growth'] = np.array(history['growth'])
+    return history
 
 class Workbench:
     """Multi-Scale Stochastic Research Workbench."""
@@ -41,28 +69,9 @@ class Workbench:
 
     def run_simulation(self, steps=100):
         """Runs a single temporal simulation."""
-        inhibition = self.binding.calculate_inhibition(self.drug_concentration)
-        # Initial state: [PI3K, AKT, mTOR]
-        state = np.array([0.8, 0.8, 0.8]) 
-        
-        history = {
-            'time': np.arange(steps) * self.signaling.dt,
-            'signaling': [], # List of [PI3K, AKT, mTOR]
-            'growth': [],
-            'inhibition': inhibition
-        }
-        
-        for _ in range(steps):
-            state = self.signaling.step(state, inhibition)
-            constraints = self.metabolic_bridge.get_constraints(state)
-            growth, _ = self.solver.solve_step(constraints)
-            
-            history['signaling'].append(state.copy())
-            history['growth'].append(growth)
-            
-        history['signaling'] = np.array(history['signaling'])
-        history['growth'] = np.array(history['growth'])
-        return history
+        # This now just calls the same logic as the wrapper for consistency
+        args = (self.binding.kd, self.drug_concentration, steps, self.model_name)
+        return _single_sim_wrapper(args)
 
     def run_monte_carlo(self, n_sims=30, steps=100, n_jobs=-1):
         """Runs multiple simulations with perturbed parameters in parallel."""

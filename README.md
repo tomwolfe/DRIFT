@@ -49,3 +49,17 @@ For more in-depth information, please refer to the following:
 - **COBRApy:** Constraint-based reconstruction and analysis.
 - **Numba:** JIT compilation for high-performance SDE integration.
 - **Plotly:** Interactive multi-scale visualization.
+
+## Development and Testing
+
+The project includes a comprehensive unit test suite to ensure the reliability of the multi-scale engines.
+
+Run tests using:
+```bash
+python -m unittest discover tests
+```
+
+### Recent Improvements (Pareto Optimized)
+- **Performance:** Worker processes in Monte Carlo simulations now reuse model instances and integrators, significantly reducing overhead.
+- **Robustness:** Enhanced error handling and logging for metabolic model loading and FBA optimization.
+- **Flexibility:** `MetabolicBridge` now supports arbitrary mappings between signaling nodes and metabolic reactions with configurable influence (positive/negative).
