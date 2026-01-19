@@ -17,7 +17,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 warnings.filterwarnings("ignore", category=UserWarning)
 
 
-def main(config: SimulationConfig = None, run_sensitivity=False, json_export=None):
+def main(config: SimulationConfig = None, run_sensitivity=False, json_export=None, human_cancer=False):
     print("==========================================================")
     print("   DRIFT: Multi-Scale Stochastic Research Workbench       ")
     print("==========================================================")
@@ -25,6 +25,17 @@ def main(config: SimulationConfig = None, run_sensitivity=False, json_export=Non
     # Use provided config or create default
     if config is None:
         config = SimulationConfig()
+
+    # Apply Human Cancer pre-configuration if requested
+    topology = None
+    bridge = None
+    if human_cancer:
+        from drift.topology import get_human_cancer_topology
+        from drift.metabolic import MetabolicBridge
+        topology = get_human_cancer_topology()
+        bridge = MetabolicBridge.get_human_cancer_bridge()
+        config.model_name = "recon1" # Standard human model
+        print("[*] Human Cancer Mode enabled (PI3K/AKT/mTOR/AMPK + Recon1)")
 
     print(f"[*] Configuration: Kd={config.drug_kd}, [Drug]={config.drug_concentration}")
     print(f"[*] Units: {config.concentration_unit}, {config.time_unit}")
@@ -36,6 +47,8 @@ def main(config: SimulationConfig = None, run_sensitivity=False, json_export=Non
             drug_kd=config.drug_kd,
             drug_concentration=config.drug_concentration,
             model_name=config.model_name,
+            topology=topology,
+            bridge=bridge,
             time_unit=config.time_unit,
             concentration_unit=config.concentration_unit
         )
@@ -127,6 +140,9 @@ def parse_args():
         "--sensitivity", action="store_true", help="Run Global Sensitivity Analysis"
     )
     parser.add_argument(
+        "--human-cancer", action="store_true", help="Use human cancer signaling-metabolism bridge"
+    )
+    parser.add_argument(
         "--export-json", type=str, help="Export results to JSON file"
     )
 
@@ -155,4 +171,4 @@ if __name__ == "__main__":
 
         config = SimulationConfig(**config_kwargs)
 
-    main(config, run_sensitivity=args.sensitivity, json_export=args.export_json)
+    main(config, run_sensitivity=args.sensitivity, json_export=args.export_json, human_cancer=args.human_cancer)

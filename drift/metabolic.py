@@ -225,6 +225,35 @@ class MetabolicBridge:
         return constraints
 
 
+    @classmethod
+    def get_human_cancer_bridge(cls):
+        """
+        Returns a pre-configured MetabolicBridge for human cancer research.
+        Maps PI3K/AKT/mTOR signaling to Recon1 metabolic subsystems.
+        """
+        builder = BridgeBuilder()
+        builder.set_species_names(["PI3K", "AKT", "mTOR", "AMPK"])
+        
+        # Warburg Effect: mTOR increases glucose uptake and lactate secretion
+        builder.add_mapping(protein_name="mTOR", reaction_id="EX_glc__D_e", influence="positive", base_vmax=15.0)
+        builder.add_mapping(protein_name="mTOR", reaction_id="EX_lac__L_e", influence="positive", base_vmax=20.0)
+        
+        # Glutaminolysis: AKT increases glutamine uptake
+        builder.add_mapping(protein_name="AKT", reaction_id="EX_gln__L_e", influence="positive", base_vmax=5.0)
+        
+        # Energy sensing: AMPK activates fatty acid oxidation and oxidative phosphorylation
+        builder.add_mapping(protein_name="AMPK", reaction_id="EX_o2_e", influence="positive", base_vmax=20.0)
+        
+        # Reverse mappings (Metabolism -> Signaling)
+        # Low energy (low ATP synthase flux) activates AMPK
+        builder.add_reverse_mapping(flux_id="ATPS4r", species_name="AMPK", influence="negative", weight=0.8)
+        
+        # Growth influences mTOR
+        builder.add_reverse_mapping(flux_id="BIOMASS_RECON1", species_name="mTOR", influence="positive", weight=0.5)
+        
+        return builder.build()
+
+
 class BridgeBuilder:
     """Fluent API for building MetabolicBridge instances."""
 
@@ -519,19 +548,28 @@ class DFBASolver:
             
             if solution.status != "optimal":
                 # Pareto: Diagnostic "Autopsy"
-                # Check if any of OUR constraints are likely causing the issue
-                limiting_factor = "Unknown (Global Infeasibility)"
+                # Identify limiting factors by checking which applied constraints are at their bounds
+                limiting_factors = []
                 for rxn_id, lb in applied_constraints.items():
-                    # If the constraint is very tight (near zero or very high)
-                    if lb > -0.1: # Very low uptake allowed
-                        limiting_factor = f"Constraint on {rxn_id} too tight (LB: {lb:.2f})"
-                        break
+                    if lb > -1.0: # If we've significantly restricted an uptake
+                        limiting_factors.append(f"{rxn_id} (LB: {lb:.2f})")
+                
+                # If still unknown, look for the 'bottleneck' via relaxation (Pareto approach)
+                diag_msg = "Global Infeasibility"
+                if limiting_factors:
+                    diag_msg = f"Potential bottlenecks: {', '.join(limiting_factors[:3])}"
+                
+                # Try to find the specific metabolite that is limiting
+                # In FBA, this is often the one where the shadow price would be highest if it were feasible
+                # But since it's infeasible, we can look at the 'irreducible inconsistent subsystem' (IIS)
+                # For now, we'll provide the list of restrictive constraints.
                 
                 return {
                     "objective_value": 0.0,
                     "fluxes": {},
                     "status": solution.status,
-                    "diagnostic": limiting_factor
+                    "diagnostic": diag_msg,
+                    "bottlenecks": applied_constraints
                 }
 
             return {

@@ -3,6 +3,61 @@ from plotly.subplots import make_subplots
 import numpy as np
 
 
+def plot_death_diagnostics(history):
+    """
+    Visualizes the cause of metabolic collapse (Cell Death).
+    Identifies which signaling-driven constraints were most restrictive.
+    """
+    if not history.get("cell_death", False):
+        print("No cell death detected in this history. Diagnostic plot skipped.")
+        return None
+
+    death_step = history.get("death_step", 0)
+    diag_msg = history.get("death_cause", "Unknown")
+    
+    # Extract signaling state at death
+    signaling_at_death = history["signaling"][death_step]
+    
+    # We want to show which protein-reaction mapping was the 'killer'
+    # This requires reaching into the solver's last known state or re-calculating
+    # For the dashboard, we'll create a simple bar chart of constraints
+    
+    fig = go.Figure()
+    
+    # Plot signaling levels at time of death
+    fig.add_trace(go.Bar(
+        x=["PI3K", "AKT", "mTOR"], # Default species
+        y=signaling_at_death,
+        marker_color='red',
+        name='Protein Level'
+    ))
+
+    fig.update_layout(
+        title=f"<b>Cell Death Diagnostic</b><br>Cause: {diag_msg}",
+        yaxis_title="Normalized Level [0,1]",
+        xaxis_title="Signaling Species",
+        template="plotly_white",
+        shapes=[
+            dict(
+                type="line",
+                yref="y", y0=0.2, y1=0.2,
+                xref="paper", x0=0, x1=1,
+                line=dict(color="Gray", dash="dash"),
+            )
+        ],
+        annotations=[
+            dict(
+                x=0.5, y=0.1,
+                text="Critical Threshold",
+                showarrow=False,
+                font=dict(color="Gray")
+            )
+        ]
+    )
+    
+    return fig
+
+
 def create_dashboard(results):
     """
     Creates a multi-panel Plotly dashboard from simulation results.

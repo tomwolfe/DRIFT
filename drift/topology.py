@@ -42,6 +42,7 @@ class Topology:
     def from_sbml(cls, sbml_path: str, inhibited_species: Optional[str] = None):
         """
         Loads a topology from an SBML file.
+        Supports both SBML Core and SBML-qual (qualitative models).
         Requires python-libsbml.
         
         Args:
@@ -65,6 +66,11 @@ class Topology:
         if model is None:
             raise ValueError("No model found in SBML file.")
 
+        # Check for qualitative model (SBML-qual)
+        qual_ext = model.getPlugin("qual")
+        if qual_ext:
+            return cls._from_sbml_qual(model, qual_ext, inhibited_species)
+
         species = [s.getId() for s in model.getListOfSpecies()]
         
         # Extract parameters
@@ -79,6 +85,24 @@ class Topology:
         name = model.getName() or model.getId() or "sbml_topology"
         logger.info(f"Imported SBML model: {name}")
         
+        return cls(
+            species=species,
+            parameters=parameters,
+            name=name,
+            inhibited_species=inhibited_species
+        )
+
+    @classmethod
+    def _from_sbml_qual(cls, model, qual_ext, inhibited_species: Optional[str] = None):
+        """Internal helper to parse SBML-qual models."""
+        species = [s.getId() for s in qual_ext.getListOfQualitativeSpecies()]
+        parameters = {"k_drift": 0.5, "k_decay": 0.1} # Default rates for logical transitions
+        
+        name = model.getName() or model.getId() or "sbml_qual_topology"
+        logger.info(f"Imported SBML-qual model: {name} with {len(species)} species.")
+        
+        # We store the transitions for potential use in a drift function
+        # For now, we return a Topology that will use generic logic or can be extended
         return cls(
             species=species,
             parameters=parameters,
@@ -103,4 +127,21 @@ def get_default_topology() -> Topology:
             "k_mtor_deact": 0.1,
         },
         name="PI3K_AKT_mTOR"
+    )
+
+def get_human_cancer_topology() -> Topology:
+    """Returns a signaling topology common in human cancer (includes AMPK)."""
+    return Topology(
+        species=["PI3K", "AKT", "mTOR", "AMPK"],
+        parameters={
+            "k_pi3k_base": 0.1,
+            "k_pi3k_deg": 0.1,
+            "k_akt_act": 0.5,
+            "k_akt_deact": 0.1,
+            "k_mtor_act": 0.5,
+            "k_mtor_deact": 0.1,
+            "k_ampk_base": 0.2,
+            "k_ampk_deg": 0.1,
+        },
+        name="Human_Cancer_Signaling"
     )
