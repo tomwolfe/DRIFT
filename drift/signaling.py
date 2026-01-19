@@ -175,9 +175,16 @@ class StochasticIntegrator:
         # Performance optimization: Auto-jit custom topologies if a jitted drift is provided
         # This addresses the 'performance cliff' for custom topologies identified in audit.
         if self.topology.jitted_step_fn is None and self.topology.drift_fn is not None:
-            if type(self.topology.drift_fn).__name__ == "CPUDispatcher":
-                logger.info(f"Auto-jitting integrator for custom topology: {self.topology.name}")
-                self.topology.jitted_step_fn = create_langevin_integrator(self.topology.drift_fn)
+            # Check if it's already jitted (Numba CPUDispatcher) or marked by decorator
+            is_jitted = type(self.topology.drift_fn).__name__ == "CPUDispatcher"
+            is_marked = hasattr(self.topology.drift_fn, "_drift_model_name")
+            
+            if is_jitted or is_marked:
+                logger.info(f"Auto-jitting Milstein integrator for custom topology: {self.topology.name}")
+                try:
+                    self.topology.jitted_step_fn = create_langevin_integrator(self.topology.drift_fn)
+                except Exception as e:
+                    logger.warning(f"Failed to auto-jit integrator for {self.topology.name}: {e}. Falling back to EM.")
 
         # Stability check
         self._check_stability()

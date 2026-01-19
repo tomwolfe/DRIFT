@@ -362,6 +362,11 @@ class Workbench:
             return _gen_results()
         
         # Default behavior: collect all in memory
+        # SAFETY CHECK: If the user is about to crash their machine, force generator
+        if n_sims > 1000:
+             logger.warning(f"Extremely large N={n_sims} requested without export_to. Forcing generator mode to prevent OOM.")
+             return _gen_results()
+
         all_histories = list(_gen_results())
         
         dead_count = sum(1 for h in all_histories if h.get("cell_death", False))
@@ -398,6 +403,29 @@ class Workbench:
         for param, corr in correlations.items():
             print(f"    - {param:20}: {corr: .4f}")
             
+        # Pareto: Variance-based Sensitivity (Simplified Sobol)
+        # We calculate the "First-order" effect by looking at how much the mean growth
+        # changes across quantiles of the parameter.
+        variance_indices = {}
+        total_var = df["growth"].var()
+        if total_var > 0:
+            for param in params_to_perturb + ["drug_kd"]:
+                if param in df.columns:
+                    # Group by quartiles and calculate variance of means
+                    df["quartile"] = pd.qcut(df[param], 4, labels=False, duplicates='drop')
+                    group_means = df.groupby("quartile")["growth"].mean()
+                    if len(group_means) > 1:
+                        var_of_means = group_means.var()
+                        variance_indices[param] = var_of_means / total_var
+            
+            print("\n[+] Variance-based Sensitivity Indices (Approx. Sobol S1):")
+            # Sort by impact
+            sorted_vsi = sorted(variance_indices.items(), key=lambda x: x[1], reverse=True)
+            for param, s1 in sorted_vsi:
+                print(f"    - {param:20}: {s1:.4f}")
+            
+            results["sensitivity_variance"] = variance_indices
+
         results["sensitivity"] = correlations.to_dict()
         return results
 

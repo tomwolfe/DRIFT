@@ -183,9 +183,9 @@ class MetabolicBridge:
 
                 matched = fuzzy_match_reaction_id(rxn_id, model_rxn_ids)
                 if matched:
-                    logger.warning(f"Fuzzy matched mapping reaction '{rxn_id}' to '{matched}'. "
-                                 "This is a scientific risk. It is HIGHLY RECOMMENDED to use explicit IDs "
-                                 "and set strict_mapping=True for publication-grade results.")
+                    logger.warning(f"!!! SCIENTIFIC RISK: Fuzzy matched mapping reaction '{rxn_id}' to '{matched}'. "
+                                 "This may lead to misattribution of metabolic effects. "
+                                 "Recommendation: Use explicit reaction IDs from the model.")
                     mapping["reaction_id"] = matched
                 else:
                     logger.warning(f"Could not resolve reaction ID '{rxn_id}' in model via exact or fuzzy matching.")

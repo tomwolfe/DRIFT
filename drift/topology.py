@@ -144,6 +144,25 @@ class Topology:
         """Returns a default initial state (all 0.5 for normalized)."""
         return np.full(len(self.species), 0.5)
 
+def drift_model(name: str):
+    """
+    Decorator to mark a function as a drift model for a Topology.
+    The function should have the signature: fn(state, params_array, feedback=None)
+    where params_array includes the kinetic parameters and the drug inhibition at the end.
+    """
+    def decorator(fn):
+        # We also attempt to JIT it immediately if it's not already
+        if type(fn).__name__ != "CPUDispatcher":
+            try:
+                from numba import njit
+                fn = njit(fn)
+            except ImportError:
+                logger.warning("Numba not installed, drift_model will not be jitted.")
+        
+        fn._drift_model_name = name
+        return fn
+    return decorator
+
 def get_default_topology() -> Topology:
     """Returns the default PI3K/AKT/mTOR topology."""
     return Topology(
