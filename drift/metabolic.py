@@ -20,6 +20,42 @@ def michaelis_menten_mapping(x, km=0.5):
     return (x * (km + 1)) / (km + x)
 
 
+def fuzzy_match_reaction_id(query_id: str, model_reaction_ids: List[str]) -> Optional[str]:
+    """
+    Attempts to find a matching reaction ID in the model using common variations.
+    Handles 'EX_' prefixes, case sensitivity, and double underscores.
+    """
+    if query_id in model_reaction_ids:
+        return query_id
+    
+    # Try case-insensitive
+    lower_ids = {rid.lower(): rid for rid in model_reaction_ids}
+    if query_id.lower() in lower_ids:
+        return lower_ids[query_id.lower()]
+    
+    # Try adding/removing 'EX_' prefix
+    variations = []
+    if query_id.startswith("EX_"):
+        variations.append(query_id[3:])
+    else:
+        variations.append(f"EX_{query_id}")
+    
+    # Try replacing double underscores with single or vice-versa
+    if "__" in query_id:
+        variations.append(query_id.replace("__", "_"))
+    else:
+        # This is risky but sometimes helpful
+        pass
+
+    for var in variations:
+        if var in model_reaction_ids:
+            return var
+        if var.lower() in lower_ids:
+            return lower_ids[var.lower()]
+            
+    return None
+
+
 class MetabolicBridge:
     """Maps signaling protein concentrations to metabolic Vmax constraints."""
 
@@ -57,6 +93,46 @@ class MetabolicBridge:
             self.species_names = species_names
         
         self.reverse_mappings = reverse_mappings or []
+
+    def validate_with_model(self, model: Any) -> bool:
+        """
+        Validates and repairs reaction IDs in mappings using the provided model.
+        Uses fuzzy matching to resolve common naming discrepancies.
+        
+        Returns:
+            bool: True if all mappings were resolved, False otherwise.
+        """
+        if model is None:
+            return False
+            
+        model_rxn_ids = [r.id for r in model.reactions]
+        all_resolved = True
+        
+        # Validate forward mappings
+        for mapping in self.mappings:
+            rxn_id = mapping.get("reaction_id")
+            if rxn_id not in model_rxn_ids:
+                matched = fuzzy_match_reaction_id(rxn_id, model_rxn_ids)
+                if matched:
+                    logger.info(f"Fuzzy matched mapping reaction '{rxn_id}' to '{matched}'")
+                    mapping["reaction_id"] = matched
+                else:
+                    logger.warning(f"Could not resolve reaction ID '{rxn_id}' in model.")
+                    all_resolved = False
+                    
+        # Validate reverse mappings
+        for rev_map in self.reverse_mappings:
+            flux_id = rev_map.get("flux_id")
+            if flux_id not in model_rxn_ids:
+                matched = fuzzy_match_reaction_id(flux_id, model_rxn_ids)
+                if matched:
+                    logger.info(f"Fuzzy matched reverse mapping flux '{flux_id}' to '{matched}'")
+                    rev_map["flux_id"] = matched
+                else:
+                    logger.warning(f"Could not resolve reverse mapping flux ID '{flux_id}' in model.")
+                    all_resolved = False
+                    
+        return all_resolved
 
     def get_feedback(self, fluxes: Dict[str, float]) -> np.ndarray:
         """

@@ -21,6 +21,12 @@ logger = logging.getLogger(__name__)
 _worker_cache: Dict[tuple[str, str, int], Any] = {}
 
 
+def clear_worker_cache():
+    """Clears the global worker cache. Useful for testing or when models change."""
+    _worker_cache.clear()
+    logger.info("Worker cache cleared.")
+
+
 def _get_bridge_hash(bridge: Optional[MetabolicBridge]) -> int:
     """Generates a stable hash for a MetabolicBridge configuration."""
     if bridge is None:
@@ -167,6 +173,9 @@ class Workbench:
             print("[!] WARNING: DFBASolver is in HEADLESS mode. No COBRA-compatible LP solver found.")
             print("    Multi-scale feedback will be disabled. Install 'swiglpk' to enable FBA.")
             logger.warning("Workbench initialized with headless DFBASolver.")
+        else:
+            # Validate bridge against model IDs
+            self.metabolic_bridge.validate_with_model(self.solver.model)
 
         self.drug_concentration = drug_concentration
         self.model_name = model_name
@@ -290,7 +299,8 @@ class Workbench:
             writer = None
             try:
                 if n_jobs > 1:
-                    ctx = mp.get_context('fork') if hasattr(mp, 'get_context') and os.name != 'nt' else mp.get_context('spawn')
+                    # 'spawn' is safer than 'fork' for processes with complex C-extensions (like COBRA solvers)
+                    ctx = mp.get_context('spawn')
                     with ProcessPoolExecutor(
                         max_workers=n_jobs,
                         mp_context=ctx,

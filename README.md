@@ -104,6 +104,20 @@ docker build -t drift .
 docker run -it drift
 ```
 
+## ⚡ Performance & Solver Guide
+
+DRIFT is optimized for performance, but the overall speed of multi-scale simulations is often limited by the underlying Linear Programming (LP) solver.
+
+| Model Scale | Recommended Solver | Rationale |
+| --- | --- | --- |
+| **Small (Textbook/Core)** | `glpk` (swiglpk) | Fast enough for ~1000 iterations; easy to install. |
+| **Medium (iJO1366)** | `glpk` or `CPLEX` | GLPK is adequate, but commercial solvers offer better stability. |
+| **Large (Human GEM/Recon1)** | `Gurobi` or `CPLEX` | **Highly Recommended.** Commercial solvers are 10-50x faster for large-scale ensembles. |
+
+### Optimization Tips:
+- **Multiprocessing:** DRIFT uses a `spawn` context for parallel jobs. For large models, ensure you have sufficient RAM, as each worker process maintains its own model instance in memory.
+- **Worker Cache:** The `Workbench` automatically caches initialized models across Monte Carlo iterations to avoid the overhead of reloading genome-scale models.
+
 ### Basic Usage
 
 Run a standard Monte Carlo simulation:
