@@ -9,104 +9,36 @@ logger = logging.getLogger(__name__)
 
 
 @njit
-def pi3k_akt_mtor_drift(state, params, feedback=None):
-    """
-    Specific drift function for PI3K/AKT/mTOR with metabolic feedback.
-    state: [PI3K, AKT, mTOR]
-    params: [k_pi3k_base, k_pi3k_deg, k_akt_act, k_akt_deact, k_mtor_act, k_mtor_deact, inhibition]
-    """
-    if len(state) < 3:
-        # Fallback or error for Numba
-        return np.zeros_like(state)
-
-    pi3k, akt, mtor = state[0], state[1], state[2]
-    (
-        k_pi3k_base,
-        k_pi3k_deg,
-        k_akt_act,
-        k_akt_deact,
-        k_mtor_act,
-        k_mtor_deact,
-        inhibition,
-    ) = params[:7]
-
-    # Default feedback to 1.0 if not provided
-    fb = np.ones(len(state))
-    if feedback is not None:
-        fb = feedback
-
-    # Drug inhibits PI3K activity/availability
-    effective_pi3k = pi3k * (1.0 - inhibition)
-
-    # PI3K dynamics (basal synthesis and degradation)
-    # feedback[0] modulates PI3K synthesis
-    dpi3k = k_pi3k_base * fb[0] - k_pi3k_deg * pi3k
-
-    # AKT dynamics (activated by PI3K)
-    # feedback[1] modulates AKT activation rate
-    dakt = k_akt_act * fb[1] * effective_pi3k * (1.0 - akt) - k_akt_deact * akt
-
-    # mTOR dynamics (activated by AKT, modulated by metabolic feedback)
-    # Primary metabolic feedback acts on mTOR (index 2)
-    effective_mtor_act = k_mtor_act * fb[2]
-    dmtor = effective_mtor_act * akt * (1.0 - mtor) - k_mtor_deact * mtor
-
-    res = np.zeros_like(state)
-    res[0] = dpi3k
-    res[1] = dakt
-    res[2] = dmtor
-    
-    # Any additional species (like AMPK) just have basal decay in this specific model
-    if len(state) > 3:
-        for i in range(3, len(state)):
-            # Generic decay for unspecified species
-            res[i] = 0.1 * (0.5 - state[i])
-
-    return res
-
-
-@njit
-def langevin_step(state, dt, params, noise_scale, feedback=None):
+def langevin_step_generic(state, dt, params, noise_scale, drift_fn, feedback=None):
     """
     One step of SDE integration using the Milstein scheme for better stability.
     Uses state-dependent noise to ensure biological plausibility near [0, 1] boundaries.
+    Accepts an arbitrary jitted drift_fn.
     """
-    drift = pi3k_akt_mtor_drift(state, params, feedback=feedback)
+    drift = drift_fn(state, params, feedback=feedback)
     
     # Random term
     dw = np.random.normal(0, 1.0, size=len(state)) * np.sqrt(dt)
     
     # State-dependent noise: b(x) = noise_scale * sqrt(x * (1-x))
-    # This naturally vanishes at boundaries, improving stability.
-    # We use a small epsilon to avoid sqrt(0) and division by zero.
     eps = 1e-6
     clamped_state = np.zeros_like(state)
     for i in range(len(state)):
         clamped_state[i] = max(eps, min(1.0 - eps, state[i]))
         
     b = noise_scale * np.sqrt(clamped_state * (1.0 - clamped_state))
-    
-    # Milstein term: 0.5 * b(x) * b'(x) * (dw^2 - dt)
-    # b'(x) = noise_scale * (1 - 2x) / (2 * sqrt(x * (1 - x)))
-    # b(x) * b'(x) = noise_scale^2 * (1 - 2x) / 2
-    # Milstein term = 0.5 * [noise_scale^2 * (1 - 2x) / 2] * (dw^2 - dt)
-    #               = 0.25 * noise_scale^2 * (1 - 2x) * (dw^2 - dt)
     milstein_corr = 0.25 * (noise_scale**2) * (1.0 - 2.0 * clamped_state) * (dw**2 - dt)
 
     # Update state
     new_state = state + drift * dt + b * dw + milstein_corr
 
-    # Reflection principle: if the state exceeds boundaries, reflect it back.
-    # This is more robust than hard-clamping for preserving distributions.
+    # Reflection principle
     for i in range(len(new_state)):
-        # Reflect at 0
         if new_state[i] < 0:
             new_state[i] = -new_state[i]
-        # Reflect at 1
         if new_state[i] > 1:
             new_state[i] = 2.0 - new_state[i]
         
-        # Final safety clamp in case of extreme steps
         if new_state[i] < 0: new_state[i] = eps
         if new_state[i] > 1: new_state[i] = 1.0 - eps
 
@@ -239,15 +171,9 @@ class StochasticIntegrator:
             val = float(feedback)
             feedback = np.ones(len(self.topology.species)) * val
 
-        # Performance optimization: if using default topology, use jitted function
-        if self.topology.name == "PI3K_AKT_mTOR":
-            params = np.concatenate((self.base_params, [inhibition]))
-            return langevin_step(state, self.dt, params, self.noise_scale, feedback=feedback)
-
-        # High-performance custom topology
+        # Performance optimization: if using jitted topology, use it
         if self.topology.jitted_step_fn is not None:
             # We assume the jitted_step_fn has signature (state, dt, params, noise_scale, feedback)
-            # or it handles inhibition inside its params
             params = np.concatenate((self.base_params, [inhibition]))
             return self.topology.jitted_step_fn(state, self.dt, params, self.noise_scale, feedback)
 

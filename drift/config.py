@@ -18,6 +18,7 @@ class SimulationConfig:
     mc_iterations: int = 30  # Number of Monte Carlo simulations
     time_unit: str = "hours"  # Unit for time-steps
     concentration_unit: str = "uM"  # Unit for drug concentration
+    flux_unit: str = "mmol/gDW/h"  # Unit for metabolic fluxes (COBRA default)
 
     # Signaling parameters
     dt: float = 0.1  # Time step for integrator (in time_units)
@@ -83,6 +84,7 @@ class SimulationConfig:
             "mc_iterations": self.mc_iterations,
             "time_unit": self.time_unit,
             "concentration_unit": self.concentration_unit,
+            "flux_unit": self.flux_unit,
             "dt": self.dt,
             "noise_scale": self.noise_scale,
             "model_name": self.model_name,

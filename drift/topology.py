@@ -163,6 +163,62 @@ def drift_model(name: str):
         return fn
     return decorator
 
+@drift_model("PI3K_AKT_mTOR")
+def pi3k_akt_mtor_drift(state, params, feedback=None):
+    """
+    Specific drift function for PI3K/AKT/mTOR with metabolic feedback.
+    state: [PI3K, AKT, mTOR]
+    params: [k_pi3k_base, k_pi3k_deg, k_akt_act, k_akt_deact, k_mtor_act, k_mtor_deact, inhibition]
+    """
+    if len(state) < 3:
+        # Fallback or error for Numba
+        return np.zeros_like(state)
+
+    pi3k, akt, mtor = state[0], state[1], state[2]
+    (
+        k_pi3k_base,
+        k_pi3k_deg,
+        k_akt_act,
+        k_akt_deact,
+        k_mtor_act,
+        k_mtor_deact,
+        inhibition,
+    ) = params[:7]
+
+    # Default feedback to 1.0 if not provided
+    fb = np.ones(len(state))
+    if feedback is not None:
+        fb = feedback
+
+    # Drug inhibits PI3K activity/availability
+    effective_pi3k = pi3k * (1.0 - inhibition)
+
+    # PI3K dynamics (basal synthesis and degradation)
+    # feedback[0] modulates PI3K synthesis
+    dpi3k = k_pi3k_base * fb[0] - k_pi3k_deg * pi3k
+
+    # AKT dynamics (activated by PI3K)
+    # feedback[1] modulates AKT activation rate
+    dakt = k_akt_act * fb[1] * effective_pi3k * (1.0 - akt) - k_akt_deact * akt
+
+    # mTOR dynamics (activated by AKT, modulated by metabolic feedback)
+    # Primary metabolic feedback acts on mTOR (index 2)
+    effective_mtor_act = k_mtor_act * fb[2]
+    dmtor = effective_mtor_act * akt * (1.0 - mtor) - k_mtor_deact * mtor
+
+    res = np.zeros_like(state)
+    res[0] = dpi3k
+    res[1] = dakt
+    res[2] = dmtor
+    
+    # Any additional species (like AMPK) just have basal decay in this specific model
+    if len(state) > 3:
+        for i in range(3, len(state)):
+            # Generic decay for unspecified species
+            res[i] = 0.1 * (0.5 - state[i])
+
+    return res
+
 def get_default_topology() -> Topology:
     """Returns the default PI3K/AKT/mTOR topology."""
     return Topology(
@@ -175,5 +231,6 @@ def get_default_topology() -> Topology:
             "k_mtor_act": 0.5,
             "k_mtor_deact": 0.1,
         },
+        drift_fn=pi3k_akt_mtor_drift,
         name="PI3K_AKT_mTOR"
     )

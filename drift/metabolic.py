@@ -22,7 +22,7 @@ def michaelis_menten_mapping(x, km=0.5):
     return (x * (km + 1)) / (km + x)
 
 
-def fuzzy_match_reaction_id(query_id: str, model_reaction_ids: List[str], similarity_threshold: float = 0.7) -> Optional[str]:
+def fuzzy_match_reaction_id(query_id: str, model_reaction_ids: List[str], similarity_threshold: float = 0.8) -> Optional[str]:
     """
     Attempts to find a matching reaction ID in the model using common variations.
     Handles 'EX_' prefixes, case sensitivity, and double underscores.
@@ -101,7 +101,8 @@ class MetabolicBridge:
         reverse_mappings: Optional[List[Dict[str, Any]]] = None,
         species_names: Optional[List[str]] = None,
         strict_mapping: bool = False,
-        basal_growth_rate: float = 0.2
+        basal_growth_rate: float = 0.2,
+        flux_unit: str = "mmol/gDW/h"
     ):
         """
         Initialize the MetabolicBridge.
@@ -112,9 +113,11 @@ class MetabolicBridge:
             species_names: Optional list of signaling species names to resolve name-based mappings.
             strict_mapping: If True, disables fuzzy matching and raises error on missing IDs.
             basal_growth_rate: Reference growth rate for feedback normalization (default: 0.2).
+            flux_unit: Unit for metabolic fluxes (default: "mmol/gDW/h").
         """
         self.strict_mapping = strict_mapping
         self.basal_growth_rate = basal_growth_rate
+        self.flux_unit = flux_unit
         if mappings is None:
             # Default: mTOR increases glucose uptake capacity
             self.mappings: List[Dict[str, Any]] = [
@@ -183,6 +186,11 @@ class MetabolicBridge:
         model_rxn_ids = [r.id for r in model.reactions]
         all_resolved = True
         
+        # Unit consistency check
+        if self.flux_unit != "mmol/gDW/h":
+            logger.warning(f"Non-standard flux unit detected: {self.flux_unit}. "
+                         "Standard COBRA models assume mmol/gDW/h. Ensure your base_vmax values are correctly scaled.")
+
         # Validate forward mappings
         for mapping in self.mappings:
             rxn_id = mapping.get("reaction_id")
@@ -192,11 +200,13 @@ class MetabolicBridge:
                     all_resolved = False
                     continue
 
-                # Get similarity for logging
-                similarity = difflib.SequenceMatcher(None, rxn_id.lower(), matched.lower()).ratio()
-                logger.warning(f"!!! SCIENTIFIC RISK: Fuzzy matched mapping reaction '{rxn_id}' to '{matched}' (similarity: {similarity:.2f}). "
-                             "This may lead to misattribution of metabolic effects. "
-                             "Recommendation: Use explicit reaction IDs from the model.")
+                matched = fuzzy_match_reaction_id(rxn_id, model_rxn_ids)
+                if matched:
+                    # Get similarity for logging
+                    similarity = difflib.SequenceMatcher(None, rxn_id.lower(), matched.lower()).ratio()
+                    logger.warning(f"!!! SCIENTIFIC RISK: Fuzzy matched mapping reaction '{rxn_id}' to '{matched}' (similarity: {similarity:.2f}). "
+                                 "This may lead to misattribution of metabolic effects. "
+                                 "Recommendation: Use explicit reaction IDs from the model.")
                     mapping["reaction_id"] = matched
                 else:
                     logger.warning(f"Could not resolve reaction ID '{rxn_id}' in model via exact or fuzzy matching.")
@@ -410,6 +420,12 @@ class BridgeBuilder:
         self.reverse_mappings = []
         self.species_names: Optional[List[str]] = None
         self.strict_mapping = False
+        self.flux_unit = "mmol/gDW/h"
+
+    def set_flux_unit(self, unit: str) -> "BridgeBuilder":
+        """Sets the flux unit for the bridge."""
+        self.flux_unit = unit
+        return self
 
     def set_strict_mapping(self, strict: bool = True) -> "BridgeBuilder":
         """Enables or disables strict reaction ID mapping."""
@@ -496,7 +512,8 @@ class BridgeBuilder:
             mappings=self.mappings, 
             reverse_mappings=self.reverse_mappings,
             species_names=self.species_names,
-            strict_mapping=self.strict_mapping
+            strict_mapping=self.strict_mapping,
+            flux_unit=self.flux_unit
         )
 
 

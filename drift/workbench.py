@@ -170,6 +170,7 @@ class Workbench:
         bridge=None,
         time_unit="hours",
         concentration_unit="uM",
+        flux_unit="mmol/gDW/h",
         sub_steps=5,
         refine_feedback=False,
         strict_mapping=False
@@ -185,6 +186,7 @@ class Workbench:
             bridge (MetabolicBridge, optional): Custom metabolic bridge
             time_unit (str): Unit for time (default: "hours")
             concentration_unit (str): Unit for concentration (default: "uM")
+            flux_unit (str): Unit for metabolic flux (default: "mmol/gDW/h")
             sub_steps (int): Number of signaling sub-steps per metabolic step (default: 5)
             refine_feedback (bool): If True, uses a predictor-corrector step for metabolic feedback.
             strict_mapping (bool): If True, enforces strict reaction ID mapping in the bridge.
@@ -205,7 +207,8 @@ class Workbench:
         
         self.metabolic_bridge = bridge or MetabolicBridge(
             species_names=eff_topology.species,
-            strict_mapping=strict_mapping
+            strict_mapping=strict_mapping,
+            flux_unit=flux_unit
         )
         if self.metabolic_bridge.species_names is None:
             self.metabolic_bridge.species_names = eff_topology.species
@@ -235,6 +238,7 @@ class Workbench:
         self.model_name = model_name
         self.time_unit = time_unit
         self.concentration_unit = concentration_unit
+        self.flux_unit = flux_unit
         self.sub_steps = sub_steps
         self.refine_feedback = refine_feedback
 
