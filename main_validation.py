@@ -37,7 +37,6 @@ def test_dose_response():
         history = wb.run_simulation(steps=1000)
         growth_rates.append(np.mean(history["growth"][-100:]))
 
-    print(f"DEBUG: Dose-Response Growths: {growth_rates}")
     # Use a small epsilon for float comparison or just check they are reasonably separated
     assert (
         growth_rates[0] > growth_rates[1] * 0.99
@@ -56,8 +55,6 @@ def test_signaling_delays():
     final_akt = np.mean(signaling[-100:, 1])
     final_mtor = np.mean(signaling[-100:, 2])
 
-    print(f"DEBUG: Final AKT={final_akt:.4f}, mTOR={final_mtor:.4f}")
-
     assert (
         final_akt < 0.5
     ), f"AKT should have dropped significantly, got {final_akt:.4f}"
@@ -75,10 +72,21 @@ def test_metabolic_response():
     wb_inhibited.signaling.noise_scale = 0.001
     inhibited_growth = wb_inhibited.run_simulation(steps=200)["growth"][-1]
 
-    print(
-        f"DEBUG: Basal growth={basal_growth:.4f}, Inhibited growth={inhibited_growth:.4f}"
-    )
     assert inhibited_growth < basal_growth, "Inhibited growth must be lower than basal"
+
+
+def test_solver_sensitivity():
+    wb = Workbench(model_name="textbook")
+    results = wb.solver.check_solver_sensitivity()
+    # At least one solver should be optimal
+    optimal_solvers = [s for s, r in results.items() if r["status"] == "optimal"]
+    assert len(optimal_solvers) >= 1, "No optimal solvers found"
+    
+    if len(optimal_solvers) > 1:
+        objectives = [results[s]["objective"] for s in optimal_solvers]
+        max_diff = max(objectives) - min(objectives)
+        # GLPK and others should be very close for textbook model
+        assert max_diff < 1e-5, f"Solver discrepancy too high: {max_diff}"
 
 
 def main():
@@ -91,6 +99,7 @@ def main():
         ("Pharmacological Dose-Response Sensitivity", test_dose_response),
         ("Temporal Signaling Cascade Propagation", test_signaling_delays),
         ("Metabolic Coupling Integrity", test_metabolic_response),
+        ("FBA Solver Sensitivity and Consistency", test_solver_sensitivity),
     ]
 
     passed = 0

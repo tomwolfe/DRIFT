@@ -5,6 +5,7 @@ from .signaling import StochasticIntegrator
 from .metabolic import MetabolicBridge, DFBASolver
 
 from concurrent.futures import ProcessPoolExecutor
+import multiprocessing as mp
 import os
 import logging
 from tqdm import tqdm
@@ -22,10 +23,17 @@ def _init_worker(model_name, topology=None, bridge=None):
     try:
         from .topology import get_default_topology
         eff_topology = topology or get_default_topology()
-        _worker_cache["solver"] = DFBASolver(model_name=model_name)
-        _worker_cache["integrator"] = StochasticIntegrator(dt=0.1, noise_scale=0.03, topology=eff_topology)
-        _worker_cache["bridge"] = bridge or MetabolicBridge(species_names=eff_topology.species)
-        logger.info(f"Worker initialized with model: {model_name}")
+        
+        # Pareto: If we used 'fork', the model might already be in memory.
+        # But DFBASolver's model object might not be thread-safe/process-safe
+        # if shared directly across multiple active solves. 
+        # However, _worker_cache is per-process.
+        
+        if "solver" not in _worker_cache:
+            _worker_cache["solver"] = DFBASolver(model_name=model_name)
+            _worker_cache["integrator"] = StochasticIntegrator(dt=0.1, noise_scale=0.03, topology=eff_topology)
+            _worker_cache["bridge"] = bridge or MetabolicBridge(species_names=eff_topology.species)
+            logger.info(f"Worker {os.getpid()} initialized with model: {model_name}")
     except Exception as e:
         logger.error(f"Failed to initialize worker with model {model_name}: {str(e)}")
         raise
@@ -221,8 +229,13 @@ class Workbench:
 
         if n_jobs > 1:
             try:
+                # Pareto: Use 'fork' context on Unix to share model memory (Copy-on-Write)
+                # This drastically reduces RAM overhead for genome-scale models.
+                ctx = mp.get_context('fork') if hasattr(mp, 'get_context') and os.name != 'nt' else mp.get_context('spawn')
+                
                 with ProcessPoolExecutor(
                     max_workers=n_jobs,
+                    mp_context=ctx,
                     initializer=_init_worker,
                     initargs=(self.model_name, self.topology, self.metabolic_bridge),
                 ) as executor:

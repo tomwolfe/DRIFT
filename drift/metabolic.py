@@ -74,17 +74,30 @@ class MetabolicBridge:
             species_name = rev_map.get("species_name")
             influence = rev_map.get("influence", "positive")
             weight = rev_map.get("weight", 1.0)
+            mapping_type = rev_map.get("mapping_type", "linear")
+            mapping_params = rev_map.get("mapping_params", {})
 
             if flux_id in fluxes and species_name in self.species_names:
                 idx = self.species_names.index(species_name)
-                # Normalize flux (assuming 0 to 1 range for simplified models, or relative to a baseline)
-                # For this implementation, we'll use a simple linear mapping for demonstration
-                flux_val = np.clip(fluxes[flux_id] / 10.0, 0.0, 1.0) 
+                # Normalize flux relative to a baseline or max expected (default 10.0)
+                baseline = rev_map.get("baseline", 10.0)
+                flux_val = np.clip(fluxes[flux_id] / baseline, 0.0, 1.0) 
                 
+                # Apply mapping function
+                if mapping_type == "sigmoidal":
+                    k = mapping_params.get("k", 10.0)
+                    x0 = mapping_params.get("x0", 0.5)
+                    transformed_val = sigmoidal_mapping(flux_val, k=k, x0=x0)
+                elif mapping_type == "michaelis-menten":
+                    km = mapping_params.get("km", 0.5)
+                    transformed_val = michaelis_menten_mapping(flux_val, km=km)
+                else: # Default linear
+                    transformed_val = flux_val
+
                 if influence == "positive":
-                    feedback_vec[idx] = (1.0 - weight) + weight * flux_val
+                    feedback_vec[idx] = (1.0 - weight) + weight * transformed_val
                 else:
-                    feedback_vec[idx] = (1.0 - weight) + weight * (1.0 - flux_val)
+                    feedback_vec[idx] = (1.0 - weight) + weight * (1.0 - transformed_val)
 
         # For mTOR (index 2 in default), if no specific feedback, use global
         if "mTOR" in self.species_names:
@@ -246,7 +259,10 @@ class BridgeBuilder:
         flux_id: str,
         species_name: str,
         influence: str = "positive",
-        weight: float = 1.0
+        weight: float = 1.0,
+        mapping_type: str = "linear",
+        mapping_params: Optional[Dict[str, Any]] = None,
+        baseline: float = 10.0
     ) -> "BridgeBuilder":
         """
         Adds a feedback mapping from a metabolic flux to a signaling species.
@@ -255,7 +271,10 @@ class BridgeBuilder:
             "flux_id": flux_id,
             "species_name": species_name,
             "influence": influence,
-            "weight": weight
+            "weight": weight,
+            "mapping_type": mapping_type,
+            "mapping_params": mapping_params or {},
+            "baseline": baseline
         })
         return self
 
@@ -324,8 +343,67 @@ class DFBASolver:
                 raise RuntimeError(error_msg)
                 
             logger.info(f"Available solvers: {active_solvers}. Using default.")
+            return active_solvers
         except ImportError:
             logger.warning("Could not check for available solvers via optlang. FBA might fail.")
+            return []
+
+    def check_solver_sensitivity(self):
+        """
+        Runs the current model with all available solvers and compares results.
+        This is critical for ensuring reproducibility across different environments.
+        """
+        import time
+        from optlang import available_solvers
+        
+        active_solvers = [s for s, available in available_solvers.items() if available]
+        logger.info(f"[*] Running solver sensitivity check across: {active_solvers}")
+        
+        results = {}
+        original_solver = self.model.solver.interface.__name__.split('.')[-1].replace('interface', '').lower()
+        
+        for solver_name in active_solvers:
+            try:
+                # Try setting the solver (cobra often accepts lowercase)
+                try:
+                    self.model.solver = solver_name
+                except Exception:
+                    try:
+                        self.model.solver = solver_name.lower()
+                    except Exception:
+                        logger.debug(f"Could not set solver to {solver_name}, skipping.")
+                        continue
+                    
+                start_time = time.time()
+                solution = self.model.optimize()
+                elapsed = time.time() - start_time
+                
+                results[solver_name] = {
+                    "objective": solution.objective_value,
+                    "status": solution.status,
+                    "time": elapsed
+                }
+                logger.info(f"  - {solver_name}: obj={solution.objective_value:.6f}, time={elapsed:.4f}s")
+            except Exception as e:
+                logger.warning(f"  - {solver_name}: FAILED ({str(e)})")
+        
+        # Restore original solver
+        try:
+            self.model.solver = original_solver
+        except Exception:
+            pass
+
+        # Check for discrepancies
+        if len(results) > 1:
+            objectives = [r["objective"] for r in results.values() if r["status"] == "optimal"]
+            if objectives:
+                max_diff = max(objectives) - min(objectives)
+                if max_diff > 1e-6:
+                    logger.warning(f"[!] Significant solver sensitivity detected! Max difference in objective: {max_diff:.8f}")
+                else:
+                    logger.info("[+] Solver results are consistent (diff < 1e-6).")
+        
+        return results
 
     def _load_model_safe(self, name):
         """

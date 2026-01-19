@@ -72,3 +72,35 @@ def test_cell_death_recording():
         # Once dead, growth should be 0
         death_step = history["death_step"]
         assert history["growth"][death_step] == 0.0
+
+def test_reverse_nonlinear_mapping():
+    """Test that non-linear feedback from metabolism to signaling works."""
+    topology = get_default_topology()
+    builder = BridgeBuilder()
+    builder.set_species_names(topology.species)
+    
+    # Add a sigmoidal reverse mapping from Glucose Exchange to mTOR
+    builder.add_reverse_mapping(
+        flux_id="EX_glc__D_e",
+        species_name="mTOR",
+        mapping_type="sigmoidal",
+        mapping_params={"k": 20, "x0": 0.5},
+        baseline=10.0,
+        weight=1.0
+    )
+    
+    bridge = builder.build()
+    
+    # Test feedback at different flux levels
+    # High flux (10.0 -> normalized 1.0)
+    fb_high = bridge.get_feedback({"EX_glc__D_e": 10.0})
+    m_idx = topology.species.index("mTOR")
+    assert fb_high[m_idx] > 0.99
+    
+    # Mid flux (5.0 -> normalized 0.5)
+    fb_mid = bridge.get_feedback({"EX_glc__D_e": 5.0})
+    assert 0.45 < fb_mid[m_idx] < 0.55
+    
+    # Low flux (0.0 -> normalized 0.0)
+    fb_low = bridge.get_feedback({"EX_glc__D_e": 0.0})
+    assert fb_low[m_idx] < 0.01
