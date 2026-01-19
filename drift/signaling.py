@@ -113,7 +113,20 @@ class StochasticIntegrator:
     def _generic_step(self, state, inhibition):
         """Generic Euler-Maruyama step for unknown topologies."""
         # Fallback: very simple decay-to-zero drift
+        # If inhibited_species is set, apply inhibition to that species
         drift = -0.1 * state
+        
+        # Apply inhibition if topology specifies an inhibited species
+        inhibited_species = getattr(self.topology, "inhibited_species", None)
+        if inhibited_species and inhibited_species in self.topology.species:
+            idx = self.topology.species.index(inhibited_species)
+            # Reduce the "activity" (clamped level) of the target species
+            state_with_inhibition = state.copy()
+            state_with_inhibition[idx] *= (1.0 - inhibition)
+            # Recalculate drift with inhibition if we had a more complex generic model
+            # For now, just apply it to the state used in the next step
+            state = state_with_inhibition
+
         diffusion = np.random.normal(0, self.noise_scale, size=len(state)) * np.sqrt(self.dt)
         new_state = state + drift * self.dt + diffusion
         return np.clip(new_state, 0, 1)

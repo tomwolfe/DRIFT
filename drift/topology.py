@@ -35,13 +35,14 @@ class Topology:
         )
 
     @classmethod
-    def from_sbml(cls, sbml_path: str):
+    def from_sbml(cls, sbml_path: str, inhibited_species: Optional[str] = None):
         """
         Loads a topology from an SBML file.
         Requires python-libsbml.
         
-        Note: This is a simplified importer for the v0.3.0 roadmap.
-        It extracts species and basic reaction metadata.
+        Args:
+            sbml_path: Path to the SBML file.
+            inhibited_species: ID of the species targeted by the drug.
         """
         try:
             import libsbml
@@ -57,6 +58,9 @@ class Topology:
             raise ValueError(f"Error reading SBML file: {document.getErrorLog().toString()}")
 
         model = document.getModel()
+        if model is None:
+            raise ValueError("No model found in SBML file.")
+
         species = [s.getId() for s in model.getListOfSpecies()]
         
         # Extract parameters
@@ -64,13 +68,20 @@ class Topology:
         for p in model.getListOfParameters():
             parameters[p.getId()] = p.getValue()
             
-        logger.info(f"Imported SBML model: {model.getName() or model.getId()}")
+        # If inhibited_species is provided, ensure it exists
+        if inhibited_species and inhibited_species not in species:
+            logger.warning(f"Inhibited species {inhibited_species} not found in SBML model.")
+            
+        name = model.getName() or model.getId() or "sbml_topology"
+        logger.info(f"Imported SBML model: {name}")
         
-        return cls(
+        topology = cls(
             species=species,
             parameters=parameters,
-            name=model.getName() or model.getId()
+            name=name
         )
+        topology.inhibited_species = inhibited_species
+        return topology
 
     def get_initial_state(self) -> np.ndarray:
         """Returns a default initial state (all 0.5 for normalized)."""

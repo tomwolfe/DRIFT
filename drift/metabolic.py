@@ -85,6 +85,36 @@ class MetabolicBridge:
         return constraints
 
 
+class BridgeBuilder:
+    """Fluent API for building MetabolicBridge instances."""
+
+    def __init__(self):
+        self.mappings = []
+
+    def add_mapping(
+        self, 
+        protein_idx: int, 
+        reaction_id: str, 
+        influence: str = "positive", 
+        base_vmax: float = 10.0
+    ) -> "BridgeBuilder":
+        """Adds a mapping from a signaling protein to a metabolic reaction."""
+        if influence not in ["positive", "negative"]:
+            raise ValueError("influence must be 'positive' or 'negative'")
+        
+        self.mappings.append({
+            "protein_idx": protein_idx,
+            "reaction_id": reaction_id,
+            "influence": influence,
+            "base_vmax": base_vmax
+        })
+        return self
+
+    def build(self) -> MetabolicBridge:
+        """Returns the constructed MetabolicBridge."""
+        return MetabolicBridge(mappings=self.mappings)
+
+
 class DFBASolver:
     """Dynamic Flux Balance Analysis solver."""
 

@@ -78,7 +78,14 @@ def _single_sim_wrapper(args):
 class Workbench:
     """Multi-Scale Stochastic Research Workbench."""
 
-    def __init__(self, drug_kd=1.0, drug_concentration=2.0, model_name="textbook", topology=None):
+    def __init__(
+        self, 
+        drug_kd=1.0, 
+        drug_concentration=2.0, 
+        model_name="textbook", 
+        topology=None,
+        bridge=None
+    ):
         """
         Initialize the Workbench with specified parameters.
 
@@ -87,6 +94,7 @@ class Workbench:
             drug_concentration (float): Concentration of the drug in the system
             model_name (str): Name of the metabolic model to use
             topology (Topology, optional): Signaling network topology
+            bridge (MetabolicBridge, optional): Custom metabolic bridge
         """
         if drug_kd <= 0:
             raise ValueError(f"drug_kd must be positive, got {drug_kd}")
@@ -98,7 +106,7 @@ class Workbench:
         self.binding = BindingEngine(kd=drug_kd)
         self.topology = topology
         self.signaling = StochasticIntegrator(dt=0.1, noise_scale=0.03, topology=topology)
-        self.metabolic_bridge = MetabolicBridge()
+        self.metabolic_bridge = bridge or MetabolicBridge()
         self.solver = DFBASolver(model_name=model_name)
         self.drug_concentration = drug_concentration
         self.model_name = model_name
