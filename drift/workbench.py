@@ -20,9 +20,11 @@ _worker_cache: Dict[str, Any] = {}
 def _init_worker(model_name, topology=None):
     """Initializes a worker process by loading the model once."""
     try:
+        from .topology import get_default_topology
+        eff_topology = topology or get_default_topology()
         _worker_cache["solver"] = DFBASolver(model_name=model_name)
-        _worker_cache["integrator"] = StochasticIntegrator(dt=0.1, noise_scale=0.03, topology=topology)
-        _worker_cache["bridge"] = MetabolicBridge()
+        _worker_cache["integrator"] = StochasticIntegrator(dt=0.1, noise_scale=0.03, topology=eff_topology)
+        _worker_cache["bridge"] = MetabolicBridge(species_names=eff_topology.species)
         logger.info(f"Worker initialized with model: {model_name}")
     except Exception as e:
         logger.error(f"Failed to initialize worker with model {model_name}: {str(e)}")
@@ -34,6 +36,9 @@ def _single_sim_wrapper(args):
     drug_kd, drug_concentration, steps, model_name, topology = args
 
     try:
+        from .topology import get_default_topology
+        eff_topology = topology or get_default_topology()
+
         # Reuse cached components if they exist
         if "solver" in _worker_cache:
             solver = _worker_cache["solver"]
@@ -43,8 +48,8 @@ def _single_sim_wrapper(args):
         else:
             # Fallback for non-pool execution
             binding = BindingEngine(kd=drug_kd)
-            integrator = StochasticIntegrator(dt=0.1, noise_scale=0.03, topology=topology)
-            bridge = MetabolicBridge()
+            integrator = StochasticIntegrator(dt=0.1, noise_scale=0.03, topology=eff_topology)
+            bridge = MetabolicBridge(species_names=eff_topology.species)
             solver = DFBASolver(model_name=model_name)
 
         inhibition = binding.calculate_inhibition(drug_concentration)
@@ -118,7 +123,15 @@ class Workbench:
         self.binding = BindingEngine(kd=drug_kd)
         self.topology = topology
         self.signaling = StochasticIntegrator(dt=0.1, noise_scale=0.03, topology=topology)
-        self.metabolic_bridge = bridge or MetabolicBridge()
+        
+        from .topology import get_default_topology
+        eff_topology = topology or get_default_topology()
+        
+        self.metabolic_bridge = bridge or MetabolicBridge(species_names=eff_topology.species)
+        # Ensure bridge has species names if it was provided without them
+        if self.metabolic_bridge.species_names is None:
+            self.metabolic_bridge.species_names = eff_topology.species
+            
         self.solver = DFBASolver(model_name=model_name)
         self.drug_concentration = drug_concentration
         self.model_name = model_name

@@ -19,6 +19,20 @@ def create_dashboard(results):
     if not all_histories:
         raise ValueError("all_histories cannot be empty")
 
+    # Pareto: Decimation for performance scaling
+    original_time = all_histories[0]["time"]
+    n_steps = len(original_time)
+    max_display_points = 1000
+    
+    if n_steps > max_display_points:
+        step_size = n_steps // max_display_points
+        indices = np.arange(0, n_steps, step_size)
+        time = original_time[indices]
+        decimate = True
+    else:
+        time = original_time
+        decimate = False
+
     fig = make_subplots(
         rows=2,
         cols=2,
@@ -36,7 +50,6 @@ def create_dashboard(results):
         ],
     )
 
-    time = all_histories[0]["time"]
     n_sims = len(all_histories)
 
     # 1. Sensitivity Analysis (Top Right)
@@ -97,51 +110,31 @@ def create_dashboard(results):
         show_leg = bool(i == sample_indices[0])
 
         # Signaling (Top Left)
-        fig.add_trace(
-            go.Scatter(
-                x=time,
-                y=hist["signaling"][:, 0],
-                mode="lines",
-                line=dict(color=colors["PI3K"], width=1.5),
-                opacity=0.5,
-                name="PI3K",
-                legendgroup="pi3k",
-                showlegend=show_leg,
-            ),
-            row=1,
-            col=1,
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=time,
-                y=hist["signaling"][:, 1],
-                mode="lines",
-                line=dict(color=colors["AKT"], width=1.5),
-                opacity=0.5,
-                name="AKT",
-                legendgroup="akt",
-                showlegend=show_leg,
-            ),
-            row=1,
-            col=1,
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=time,
-                y=hist["signaling"][:, 2],
-                mode="lines",
-                line=dict(color=colors["mTOR"], width=1.5),
-                opacity=0.5,
-                name="mTOR",
-                legendgroup="mtor",
-                showlegend=show_leg,
-            ),
-            row=1,
-            col=1,
-        )
+        for species_idx, (species_name, color) in enumerate(zip(["PI3K", "AKT", "mTOR"], [colors["PI3K"], colors["AKT"], colors["mTOR"]])):
+            y_data = hist["signaling"][:, species_idx]
+            if decimate:
+                y_data = y_data[indices]
+                
+            fig.add_trace(
+                go.Scatter(
+                    x=time,
+                    y=y_data,
+                    mode="lines",
+                    line=dict(color=color, width=1.5),
+                    opacity=0.5,
+                    name=species_name,
+                    legendgroup=species_name.lower(),
+                    showlegend=show_leg,
+                ),
+                row=1,
+                col=1,
+            )
 
         # Growth Trajectories normalized (Bottom Left)
         growth_pct = (hist["growth"] / basal_growth) * 100
+        if decimate:
+            growth_pct = growth_pct[indices]
+            
         fig.add_trace(
             go.Scatter(
                 x=time,
@@ -161,6 +154,10 @@ def create_dashboard(results):
     growths_pct = np.array([(h["growth"] / basal_growth) * 100 for h in all_histories])
     mean_growth = np.mean(growths_pct, axis=0)
     std_growth = np.std(growths_pct, axis=0)
+    
+    if decimate:
+        mean_growth = mean_growth[indices]
+        std_growth = std_growth[indices]
 
     # Shade for std dev
     fig.add_trace(

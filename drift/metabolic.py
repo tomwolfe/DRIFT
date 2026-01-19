@@ -10,20 +10,26 @@ logger = logging.getLogger(__name__)
 class MetabolicBridge:
     """Maps signaling protein concentrations to metabolic Vmax constraints."""
 
-    def __init__(self, mappings: Optional[List[Dict[str, Any]]] = None, reverse_mappings: Optional[List[Dict[str, Any]]] = None):
+    def __init__(
+        self, 
+        mappings: Optional[List[Dict[str, Any]]] = None, 
+        reverse_mappings: Optional[List[Dict[str, Any]]] = None,
+        species_names: Optional[List[str]] = None
+    ):
         """
         Initialize the MetabolicBridge.
 
         Args:
             mappings: List of dicts specifying how signaling affects metabolism.
             reverse_mappings: List of dicts specifying how metabolism affects signaling.
-                             Example: [{'reaction_id': 'ATPS4r', 'target_protein_idx': 2, 'threshold': 0.1}]
+            species_names: Optional list of signaling species names to resolve name-based mappings.
         """
         if mappings is None:
-            # Default: mTOR (idx 2) increases glucose uptake capacity
+            # Default: mTOR increases glucose uptake capacity
             self.mappings: List[Dict[str, Any]] = [
                 {
-                    "protein_idx": 2,
+                    "protein_name": "mTOR",
+                    "protein_idx": 2,  # Keep for backward compatibility
                     "reaction_id": "EX_glc__D_e",
                     "influence": "positive",
                     "base_vmax": 10.0,
@@ -33,6 +39,7 @@ class MetabolicBridge:
             self.mappings = mappings
         
         self.reverse_mappings = reverse_mappings or []
+        self.species_names = species_names
 
     def get_feedback(self, fluxes: Dict[str, float]) -> float:
         """
@@ -79,13 +86,21 @@ class MetabolicBridge:
         state_len = len(signaling_state)
 
         for map_config in self.mappings:
-            idx: int = map_config["protein_idx"]
+            idx = map_config.get("protein_idx")
+            name = map_config.get("protein_name")
             rxn_id: str = map_config["reaction_id"]
             base_vmax: float = map_config.get("base_vmax", 10.0)
             influence: str = map_config.get("influence", "positive")
 
-            if not (0 <= idx < state_len):
-                logger.warning(f"Invalid protein index {idx} for state of length {state_len}, skipping mapping")
+            # Resolve name to index if possible
+            if name is not None and self.species_names is not None:
+                if name in self.species_names:
+                    idx = self.species_names.index(name)
+                else:
+                    logger.warning(f"Protein name '{name}' not found in species_names {self.species_names}")
+
+            if idx is None or not (0 <= idx < state_len):
+                logger.warning(f"Invalid protein index {idx} (name: {name}) for state of length {state_len}, skipping mapping")
                 continue
 
             protein_level = float(signaling_state[idx])
@@ -115,29 +130,63 @@ class BridgeBuilder:
 
     def __init__(self):
         self.mappings = []
+        self.species_names = None
+
+    def set_species_names(self, species_names: List[str]) -> "BridgeBuilder":
+        """Sets the species names for the bridge."""
+        self.species_names = species_names
+        return self
 
     def add_mapping(
         self, 
-        protein_idx: int, 
-        reaction_id: str, 
+        protein: Optional[Union[int, str]] = None, 
+        reaction_id: str = "", 
         influence: str = "positive", 
-        base_vmax: float = 10.0
+        base_vmax: float = 10.0,
+        protein_idx: Optional[int] = None,
+        protein_name: Optional[str] = None
     ) -> "BridgeBuilder":
-        """Adds a mapping from a signaling protein to a metabolic reaction."""
+        """
+        Adds a mapping from a signaling protein to a metabolic reaction.
+        
+        Args:
+            protein: Either the index (int) or the name (str) of the signaling protein.
+            reaction_id: The ID of the metabolic reaction to constrain.
+            influence: 'positive' or 'negative' effect.
+            base_vmax: The maximum flux capacity.
+            protein_idx: Explicit protein index (for backward compatibility).
+            protein_name: Explicit protein name.
+        """
         if influence not in ["positive", "negative"]:
             raise ValueError("influence must be 'positive' or 'negative'")
         
-        self.mappings.append({
-            "protein_idx": protein_idx,
+        mapping = {
             "reaction_id": reaction_id,
             "influence": influence,
             "base_vmax": base_vmax
-        })
+        }
+        
+        # Resolve protein identifier
+        p = protein
+        if p is None:
+            p = protein_idx
+        if p is None:
+            p = protein_name
+            
+        if p is None:
+            raise ValueError("Must provide protein index or name")
+        
+        if isinstance(p, int):
+            mapping["protein_idx"] = p
+        else:
+            mapping["protein_name"] = p
+
+        self.mappings.append(mapping)
         return self
 
     def build(self) -> MetabolicBridge:
         """Returns the constructed MetabolicBridge."""
-        return MetabolicBridge(mappings=self.mappings)
+        return MetabolicBridge(mappings=self.mappings, species_names=self.species_names)
 
 
 class DFBASolver:
