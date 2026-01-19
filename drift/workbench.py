@@ -58,7 +58,7 @@ def _get_bridge_hash(bridge: Optional[MetabolicBridge]) -> int:
         # Use a deterministic string representation for hashing
         hash_str = json.dumps([mapping_data, rev_mapping_data, state_data], sort_keys=True)
         import hashlib
-        return int(hashlib.md5(hash_str.encode()).hexdigest(), 16)
+        return int(hashlib.sha256(hash_str.encode()).hexdigest(), 16) % (2**32)  # Limit to 32-bit integer
     except Exception as e:
         logger.warning(f"Failed to generate deterministic hash for bridge: {e}. Falling back to default hash.")
         return hash(str(getattr(bridge, "__dict__", "")))
@@ -237,9 +237,10 @@ class Workbench:
             # Pareto: Auto-calibrate normalization if we have a model
             try:
                 logger.info("Auto-calibrating MetabolicBridge basal growth rate...")
-                basal_sol = self.solver.model.optimize()
-                if basal_sol.status == "optimal":
-                    self.metabolic_bridge.calibrate(basal_sol.fluxes.to_dict())
+                if self.solver.model is not None:
+                    basal_sol = self.solver.model.optimize()
+                    if basal_sol is not None and basal_sol.status == "optimal":
+                        self.metabolic_bridge.calibrate(basal_sol.fluxes.to_dict())
             except Exception as e:
                 logger.warning(f"Auto-calibration failed: {e}")
 
@@ -257,7 +258,11 @@ class Workbench:
         seed = self.random_state if self.random_state is not None else None
         args = (self.binding.kd, 0.0, steps, self.solver.model or self.model_name, self.topology, self.metabolic_bridge, None, self.sub_steps, self.refine_feedback, fingerprint, seed)
         history = _single_sim_wrapper(args)
-        return np.mean(history["growth"])
+        if isinstance(history, dict) and "growth" in history:
+            return float(np.mean(history["growth"]))
+        else:
+            logger.warning("History is not a dictionary with 'growth' key, returning 0.0")
+            return 0.0
 
     def run_simulation(self, steps=100, seed: Optional[int] = None) -> SimulationResult:
         """
@@ -357,7 +362,7 @@ class Workbench:
         model_or_name = self.solver.model or self.model_name
 
         # Master seeding logic
-        master_seed = self.random_state if self.random_state is not None else random.randint(0, 2**31)
+        master_seed = self.random_state if self.random_state is not None else np.random.randint(0, 2**31)
         sim_seeds = [master_seed + i for i in range(n_sims)]
 
         for i in range(n_sims):
@@ -425,13 +430,13 @@ class Workbench:
                     print(f"[+] Incremental export saved to {export_to}")
 
         if return_generator or export_to:
-            return _gen_results()
-        
+            return _gen_results()  # type: ignore
+
         # Default behavior: collect all in memory
         # SAFETY CHECK: If the user is about to crash their machine, force generator
         if n_sims > 1000:
              logger.warning(f"Extremely large N={n_sims} requested without export_to. Forcing generator mode to prevent OOM.")
-             return _gen_results()
+             return _gen_results()  # type: ignore
 
         all_histories = list(_gen_results())
         
@@ -454,27 +459,43 @@ class Workbench:
         params_to_perturb = list(eff_topology.parameters.keys())
         
         results = self.run_monte_carlo(n_sims=n_sims, steps=steps, n_jobs=n_jobs, perturb_params=params_to_perturb)
-        
+
         # Calculate sensitivity indices (Pearson correlation with final growth)
         data = []
-        for h in results["histories"]:
-            row = {"growth": np.mean(h["growth"]), "drug_kd": h["drug_kd"]}
-            row.update(h["params"])
-            data.append(row)
+        if isinstance(results, dict) and "histories" in results:
+            # Results is a dictionary with histories
+            for h in results["histories"]:
+                row = {"growth": np.mean(h["growth"]), "drug_kd": h["drug_kd"]}
+                row.update(h["params"])
+                data.append(row)
+        else:
+            # Results is a generator, convert to list
+            histories_list = list(results)
+            for h in histories_list:
+                if isinstance(h, dict):
+                    row = {"growth": np.mean(h["growth"]), "drug_kd": h["drug_kd"]}
+                    row.update(h["params"])
+                    data.append(row)
         
         df = pd.DataFrame(data)
-        correlations = df.corr(method="spearman")["growth"].drop("growth").sort_values(ascending=False)
-        
+        correlation_matrix = df.corr(method="spearman")
+        growth_corr = correlation_matrix["growth"]
+        # Remove the "growth" entry from correlations to avoid self-correlation
+        # Convert to dict and remove 'growth' key, then back to series
+        growth_corr_dict = growth_corr.to_dict()
+        growth_corr_dict.pop("growth", None)  # Remove 'growth' key if it exists
+        correlations = pd.Series(growth_corr_dict).sort_values(ascending=False)
+
         print("\n[+] Sensitivity Analysis Results (Spearman Correlation with Growth):")
         for param, corr in correlations.items():
             print(f"    - {param:20}: {corr: .4f}")
-            
+
         # Pareto: Variance-based Sensitivity (Simplified Sobol)
         # We calculate the "First-order" effect by looking at how much the mean growth
         # changes across quantiles of the parameter.
         variance_indices = {}
         total_var = df["growth"].var()
-        if total_var > 0:
+        if total_var is not None and total_var > 0:
             for param in params_to_perturb + ["drug_kd"]:
                 if param in df.columns:
                     # Group by quartiles and calculate variance of means
@@ -482,18 +503,25 @@ class Workbench:
                     group_means = df.groupby("quartile")["growth"].mean()
                     if len(group_means) > 1:
                         var_of_means = group_means.var()
-                        variance_indices[param] = var_of_means / total_var
-            
+                        if total_var != 0:
+                            variance_indices[param] = var_of_means / total_var
+                        else:
+                            variance_indices[param] = 0.0  # If no variance in growth, sensitivity is 0
+
             print("\n[+] Variance-based Sensitivity Indices (Approx. Sobol S1):")
             # Sort by impact
             sorted_vsi = sorted(variance_indices.items(), key=lambda x: x[1], reverse=True)
             for param, s1 in sorted_vsi:
                 print(f"    - {param:20}: {s1:.4f}")
-            
-            results["sensitivity_variance"] = variance_indices
 
-        results["sensitivity"] = correlations.to_dict()
-        return results
+        # Create a new results dictionary for return
+        gsa_results = {
+            "sensitivity": correlations.to_dict()
+        }
+        if variance_indices:
+            gsa_results["sensitivity_variance"] = variance_indices
+
+        return gsa_results
 
     def calibrate_to_data(
         self, 
@@ -535,14 +563,20 @@ class Workbench:
                 
             # Run simulation
             # Experimental data often covers long time scales, match steps to data
-            max_time = validator.exp_data["time"].max()
-            steps = int(max_time / self.signaling.dt)
+            if validator.exp_data is not None:
+                max_time = validator.exp_data["time"].max()
+                steps = int(max_time / self.signaling.dt)
+            else:
+                logger.error("Experimental data not loaded for calibration.")
+                raise ValueError("Experimental data not loaded for calibration.")
             
             history = self.run_simulation(steps=steps)
             
             # Benchmark
             try:
-                metrics = validator.benchmark(history, mapping)
+                # Cast SimulationResult to dict to satisfy mypy
+                history_dict = dict(history)
+                metrics = validator.benchmark(history_dict, mapping)
                 total_mse = sum(m["mse"] for m in metrics.values())
                 
                 if total_mse < min_total_mse:

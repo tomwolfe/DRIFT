@@ -22,16 +22,16 @@ def langevin_step_generic(state, dt, params, noise_scale, drift_fn, feedback=Non
     Accepts an arbitrary jitted drift_fn.
     """
     drift = drift_fn(state, params, feedback=feedback)
-    
+
     # Random term
     dw = np.random.normal(0, 1.0, size=len(state)) * np.sqrt(dt)
-    
+
     # State-dependent noise: b(x) = noise_scale * sqrt(x * (1-x))
     eps = 1e-6
     clamped_state = np.zeros_like(state)
     for i in range(len(state)):
         clamped_state[i] = max(eps, min(1.0 - eps, state[i]))
-        
+
     b = noise_scale * np.sqrt(clamped_state * (1.0 - clamped_state))
     milstein_corr = 0.25 * (noise_scale**2) * (1.0 - 2.0 * clamped_state) * (dw**2 - dt)
 
@@ -44,7 +44,60 @@ def langevin_step_generic(state, dt, params, noise_scale, drift_fn, feedback=Non
             new_state[i] = -new_state[i]
         if new_state[i] > 1:
             new_state[i] = 2.0 - new_state[i]
-        
+
+        if new_state[i] < 0: new_state[i] = eps
+        if new_state[i] > 1: new_state[i] = 1.0 - eps
+
+    return new_state
+
+
+@njit
+def langevin_step(state, dt, params, noise_scale, feedback=None):
+    """
+    One step of SDE integration using the Milstein scheme for better stability.
+    Uses state-dependent noise to ensure biological plausibility near [0, 1] boundaries.
+    This is a simplified version that uses the default PI3K_AKT_mTOR drift function.
+    """
+    # Default PI3K_AKT_mTOR drift function
+    def default_drift_fn(state, params, feedback=None):
+        # Extract parameters for PI3K-AKT-mTOR pathway
+        # params[0:3] are degradation rates, params[3:6] are production rates, params[6] is feedback
+        k_deg = params[0:3]  # degradation rates for PI3K, AKT, mTOR
+        k_prod = params[3:6]  # production rates
+        feedback_param = params[6] if len(params) > 6 else 1.0
+
+        if feedback is not None:
+            k_prod = k_prod * feedback  # Apply feedback modulation to production rates
+
+        # Simple linearized model for PI3K-AKT-mTOR pathway
+        # dx/dt = k_prod * (1-x) - k_deg * x
+        drift = k_prod * (1.0 - state) - k_deg * state
+        return drift
+
+    drift = default_drift_fn(state, params, feedback=feedback)
+
+    # Random term
+    dw = np.random.normal(0, 1.0, size=len(state)) * np.sqrt(dt)
+
+    # State-dependent noise: b(x) = noise_scale * sqrt(x * (1-x))
+    eps = 1e-6
+    clamped_state = np.zeros_like(state)
+    for i in range(len(state)):
+        clamped_state[i] = max(eps, min(1.0 - eps, state[i]))
+
+    b = noise_scale * np.sqrt(clamped_state * (1.0 - clamped_state))
+    milstein_corr = 0.25 * (noise_scale**2) * (1.0 - 2.0 * clamped_state) * (dw**2 - dt)
+
+    # Update state
+    new_state = state + drift * dt + b * dw + milstein_corr
+
+    # Reflection principle
+    for i in range(len(new_state)):
+        if new_state[i] < 0:
+            new_state[i] = -new_state[i]
+        if new_state[i] > 1:
+            new_state[i] = 2.0 - new_state[i]
+
         if new_state[i] < 0: new_state[i] = eps
         if new_state[i] > 1: new_state[i] = 1.0 - eps
 

@@ -200,7 +200,10 @@ class MetabolicBridge:
         # Validate forward mappings
         for mapping in self.mappings:
             rxn_id = mapping.get("reaction_id")
-            if rxn_id not in model_rxn_ids:
+            if rxn_id is None:
+                logger.warning("Mapping has no reaction_id specified.")
+                all_resolved = False
+            elif rxn_id not in model_rxn_ids:
                 if self.strict_mapping:
                     logger.error(f"STRICT MAPPING FAILURE: Reaction ID '{rxn_id}' not found in model.")
                     all_resolved = False
@@ -221,7 +224,10 @@ class MetabolicBridge:
         # Validate reverse mappings
         for rev_map in self.reverse_mappings:
             flux_id = rev_map.get("flux_id")
-            if flux_id not in model_rxn_ids and flux_id not in self.probes:
+            if flux_id is None:
+                logger.warning("Reverse mapping has no flux_id specified.")
+                all_resolved = False
+            elif flux_id not in model_rxn_ids and flux_id not in self.probes:
                 if self.strict_mapping:
                     logger.error(f"STRICT MAPPING FAILURE: Reverse flux/probe ID '{flux_id}' not found.")
                     all_resolved = False
@@ -266,7 +272,9 @@ class MetabolicBridge:
             mapping_params = rev_map.get("mapping_params", {})
 
             # Value can come from direct flux or probe
-            val = fluxes.get(flux_id) if flux_id in fluxes else probe_values.get(flux_id)
+            val = None
+            if flux_id is not None:
+                val = fluxes.get(flux_id) if flux_id in fluxes else probe_values.get(flux_id)
 
             if val is not None and species_name in self.species_names:
                 idx = self.species_names.index(species_name)
@@ -629,7 +637,7 @@ class DFBASolver:
             bounds_checksum
         )
         import hashlib
-        return hashlib.md5(str(model_state).encode()).hexdigest()
+        return hashlib.sha256(str(model_state).encode()).hexdigest()
 
     def validate_model(self):
         """
