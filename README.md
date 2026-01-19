@@ -5,7 +5,16 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Coverage Status](https://coveralls.io/repos/github/tomwolfe/DRIFT/badge.svg?branch=main)](https://coveralls.io/github/tomwolfe/DRIFT?branch=main)
 
+![Sample Dashboard](assets/sample_output.png)
+
 DRIFT (**D**rug-target **R**esponse **I**ntegrated **F**lux **T**rajectory) is a multi-scale stochastic framework designed to bridge the gap between molecular binding events and systemic metabolic phenotypes.
+
+## 🚀 Interactive Demo
+
+Try DRIFT in your browser without any installation:
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/tomwolfe/DRIFT/blob/main/examples/quickstart_tutorial.ipynb)
+[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/tomwolfe/DRIFT/main?filepath=examples%2Fquickstart_tutorial.ipynb)
 
 ## 📐 System Architecture
 
@@ -43,6 +52,7 @@ Detailed documentation is available in the `docs/` directory:
 
 | Document | Description |
 | --- | --- |
+| [**Case Study Gallery**](docs/gallery.md) | **New:** Predictions for Erlotinib, Imatinib, and more. |
 | [**System Architecture**](docs/architecture.md) | Deep dive into the SDE solvers and FBA coupling. |
 | [**Getting Started Tutorial**](docs/tutorial.md) | A step-by-step guide for new users. |
 | [**Validation & Benchmarks**](docs/validation.md) | Quantitative comparison with published models. |
@@ -110,8 +120,6 @@ Running a typical simulation produces:
 - Quantitative summary of growth inhibition and metabolic drift
 - Statistical analysis of ensemble variability
 - Parameter sensitivity reports
-
-![Sample Dashboard](assets/sample_output.png)
 
 ## 🗺️ Project Roadmap
 

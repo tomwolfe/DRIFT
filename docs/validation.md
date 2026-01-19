@@ -48,7 +48,11 @@ To demonstrate DRIFT's utility in a real-world context, we benchmarked the frame
 
 For a runnable version of this benchmark, see `examples/drug_comparison.py`.
 
-## 10. How to Validate Your Own Model
+## 10. Case Study Gallery
+
+Explore predictions for other major drugs (Erlotinib, Imatinib, Everolimus, etc.) in our [**🖼️ Case Study Gallery**](gallery.md).
+
+## 11. How to Validate Your Own Model
 
 To validate a custom model within DRIFT:
 1. **Steady-State Check:** Run a simulation with `drug_concentration = 0` and ensure the growth rate matches the expected $T_d$ (doubling time) of your target cell line.
