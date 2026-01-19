@@ -17,7 +17,7 @@ from typing import Dict, Any, List, Optional, Union
 logger = logging.getLogger(__name__)
 
 # Global cache for workers to avoid reloading model
-# Key format: (model_name, topology_name, bridge_hash)
+# Key format: (model_fingerprint, topology_name, bridge_hash)
 _worker_cache: Dict[tuple[str, str, int], Any] = {}
 
 
@@ -37,6 +37,7 @@ def _get_bridge_hash(bridge: Optional[MetabolicBridge]) -> int:
         mapping_data = []
         if hasattr(bridge, "mappings"):
             for m in bridge.mappings:
+                # Handle callable mapping_fn by using its name or code hash
                 m_copy = {k: (str(v) if callable(v) else v) for k, v in m.items()}
                 mapping_data.append(m_copy)
         
@@ -46,47 +47,79 @@ def _get_bridge_hash(bridge: Optional[MetabolicBridge]) -> int:
                 rm_copy = {k: (str(v) if callable(v) else v) for k, v in rm.items()}
                 rev_mapping_data.append(rm_copy)
         
+        # Include other bridge state that affects results
+        state_data = {
+            "basal_growth_rate": getattr(bridge, "basal_growth_rate", 0.2),
+            "strict_mapping": getattr(bridge, "strict_mapping", False),
+            "species_names": getattr(bridge, "species_names", [])
+        }
+        
         # Use a deterministic string representation for hashing
-        hash_str = json.dumps([mapping_data, rev_mapping_data], sort_keys=True)
+        hash_str = json.dumps([mapping_data, rev_mapping_data, state_data], sort_keys=True)
         import hashlib
         return int(hashlib.md5(hash_str.encode()).hexdigest(), 16)
     except Exception as e:
-        logger.warning(f"Failed to generate deterministic hash for bridge: {e}. Falling back to config hash.")
+        logger.warning(f"Failed to generate deterministic hash for bridge: {e}. Falling back to default hash.")
         return hash(str(getattr(bridge, "__dict__", "")))
 
 
-def _init_worker(model_name, topology=None, bridge=None):
+def _init_worker(model_or_name, topology=None, bridge=None, model_fingerprint=None):
     """Initializes a worker process by loading the model once."""
     try:
         from .topology import get_default_topology
         eff_topology = topology or get_default_topology()
         
+        # If fingerprint not provided, try to get it
+        if model_fingerprint is None:
+            if isinstance(model_or_name, str):
+                # Temporary solver to get fingerprint
+                temp_solver = DFBASolver(model_name=model_or_name)
+                model_fingerprint = temp_solver.get_fingerprint()
+            else:
+                # It's already a model object
+                temp_solver = DFBASolver(model=model_or_name)
+                model_fingerprint = temp_solver.get_fingerprint()
+
         # Create a unique key for this configuration
         bridge_hash = _get_bridge_hash(bridge)
-        cache_key = (model_name, eff_topology.name, bridge_hash)
+        cache_key = (model_fingerprint, eff_topology.name, bridge_hash)
         
         if cache_key not in _worker_cache:
-            solver = DFBASolver(model_name=model_name)
+            if isinstance(model_or_name, str):
+                solver = DFBASolver(model_name=model_or_name)
+            else:
+                solver = DFBASolver(model=model_or_name)
+
             _worker_cache[cache_key] = {
                 "solver": solver,
                 "integrator": StochasticIntegrator(dt=0.1, noise_scale=0.03, topology=eff_topology),
                 "bridge": bridge or MetabolicBridge(species_names=eff_topology.species)
             }
-            logger.info(f"Worker {os.getpid()} initialized with model: {model_name}, topology: {eff_topology.name}")
+            logger.info(f"Worker {os.getpid()} initialized with model fingerprint: {model_fingerprint[:8]}..., topology: {eff_topology.name}")
     except Exception as e:
-        logger.error(f"Failed to initialize worker with model {model_name}: {str(e)}")
+        logger.error(f"Failed to initialize worker: {str(e)}")
         raise
 
 
 def _single_sim_wrapper(args):
     """Helper to run a single simulation in a separate process."""
-    drug_kd, drug_concentration, steps, model_name, topology, bridge, custom_params, sub_steps, refine_feedback = args
+    drug_kd, drug_concentration, steps, model_or_name, topology, bridge, custom_params, sub_steps, refine_feedback, model_fingerprint = args
 
     try:
         from .topology import get_default_topology
         eff_topology = topology or get_default_topology()
         bridge_hash = _get_bridge_hash(bridge)
-        cache_key = (model_name, eff_topology.name, bridge_hash)
+        
+        # If fingerprint not provided, we have to calculate it (expensive in worker)
+        if model_fingerprint is None:
+             if isinstance(model_or_name, str):
+                temp_solver = DFBASolver(model_name=model_or_name)
+                model_fingerprint = temp_solver.get_fingerprint()
+             else:
+                temp_solver = DFBASolver(model=model_or_name)
+                model_fingerprint = temp_solver.get_fingerprint()
+
+        cache_key = (model_fingerprint, eff_topology.name, bridge_hash)
 
         # Reuse cached components if they exist
         if cache_key in _worker_cache:
@@ -100,7 +133,11 @@ def _single_sim_wrapper(args):
             binding = BindingEngine(kd=drug_kd)
             integrator = StochasticIntegrator(dt=0.1, noise_scale=0.03, topology=eff_topology)
             sim_bridge = bridge or MetabolicBridge(species_names=eff_topology.species)
-            solver = DFBASolver(model_name=model_name)
+            
+            if isinstance(model_or_name, str):
+                solver = DFBASolver(model_name=model_or_name)
+            else:
+                solver = DFBASolver(model=model_or_name)
 
         engine = SimulationEngine(
             integrator=integrator,
@@ -203,7 +240,8 @@ class Workbench:
 
     def get_basal_growth(self, steps=100):
         """Calculates growth rate without any drug inhibition."""
-        args = (self.binding.kd, 0.0, steps, self.model_name, self.topology, self.metabolic_bridge, None, self.sub_steps, self.refine_feedback)
+        fingerprint = self.solver.get_fingerprint()
+        args = (self.binding.kd, 0.0, steps, self.solver.model or self.model_name, self.topology, self.metabolic_bridge, None, self.sub_steps, self.refine_feedback, fingerprint)
         history = _single_sim_wrapper(args)
         return np.mean(history["growth"])
 
@@ -220,7 +258,8 @@ class Workbench:
         if steps <= 0:
             raise ValueError(f"steps must be positive, got {steps}")
 
-        args = (self.binding.kd, self.drug_concentration, steps, self.model_name, self.topology, self.metabolic_bridge, None, self.sub_steps, self.refine_feedback)
+        fingerprint = self.solver.get_fingerprint()
+        args = (self.binding.kd, self.drug_concentration, steps, self.solver.model or self.model_name, self.topology, self.metabolic_bridge, None, self.sub_steps, self.refine_feedback, fingerprint)
         return _single_sim_wrapper(args)
 
     def _history_to_rows(self, hist, sim_idx):
@@ -297,6 +336,9 @@ class Workbench:
         sim_args = []
         from .topology import get_default_topology
         eff_topology = self.topology or get_default_topology()
+        
+        fingerprint = self.solver.get_fingerprint()
+        model_or_name = self.solver.model or self.model_name
 
         for _ in range(n_sims):
             perturbed_kd = base_kd * np.random.uniform(0.8, 1.2)
@@ -307,7 +349,7 @@ class Workbench:
                         custom_params[p_name] = eff_topology.parameters[p_name] * np.random.uniform(0.8, 1.2)
 
             sim_args.append(
-                (perturbed_kd, self.drug_concentration, steps, self.model_name, self.topology, self.metabolic_bridge, custom_params, self.sub_steps, self.refine_feedback)
+                (perturbed_kd, self.drug_concentration, steps, model_or_name, self.topology, self.metabolic_bridge, custom_params, self.sub_steps, self.refine_feedback, fingerprint)
             )
 
         print(f"[*] Starting Monte Carlo Ensemble (N={n_sims}, Workers={n_jobs})...")
@@ -322,7 +364,7 @@ class Workbench:
                         max_workers=n_jobs,
                         mp_context=ctx,
                         initializer=_init_worker,
-                        initargs=(self.model_name, self.topology, self.metabolic_bridge),
+                        initargs=(model_or_name, self.topology, self.metabolic_bridge, fingerprint),
                     ) as executor:
                         iterator = executor.map(_single_sim_wrapper, sim_args)
                         for i, hist in enumerate(tqdm(iterator, total=n_sims, desc="Monte Carlo", disable=n_sims < 2)):

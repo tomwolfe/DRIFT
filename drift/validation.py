@@ -57,17 +57,29 @@ class ExternalValidator:
         results = {}
         sim_time = simulation_history["time"]
         
+        from scipy.interpolate import CubicSpline
+
         for exp_col, sim_key in mapping.items():
             if exp_col not in self.exp_data.columns:
                 logger.warning(f"Column {exp_col} not found in experimental data.")
                 continue
                 
-            # Interpolate experimental data to match simulation time points
-            exp_val = np.interp(
-                sim_time, 
-                self.exp_data[time_col], 
-                self.exp_data[exp_col]
-            )
+            # Improved interpolation: Cubic Spline for biological curvature
+            try:
+                # Sort experimental data by time for CubicSpline
+                sorted_exp = self.exp_data.sort_values(time_col)
+                cs = CubicSpline(sorted_exp[time_col], sorted_exp[exp_col], extrapolate=True)
+                exp_val = cs(sim_time)
+                # Clip to avoid artifacts below zero if biological data shouldn't be negative
+                if (sorted_exp[exp_col] >= 0).all():
+                    exp_val = np.maximum(0, exp_val)
+            except Exception as e:
+                logger.warning(f"CubicSpline interpolation failed for {exp_col}: {e}. Falling back to linear.")
+                exp_val = np.interp(
+                    sim_time, 
+                    self.exp_data[time_col], 
+                    self.exp_data[exp_col]
+                )
             
             # Extract simulation data
             if sim_key in simulation_history:

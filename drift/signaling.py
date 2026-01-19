@@ -39,10 +39,12 @@ def pi3k_akt_mtor_drift(state, params, feedback=None):
     effective_pi3k = pi3k * (1.0 - inhibition)
 
     # PI3K dynamics (basal synthesis and degradation)
-    dpi3k = k_pi3k_base - k_pi3k_deg * pi3k
+    # feedback[0] modulates PI3K synthesis
+    dpi3k = k_pi3k_base * fb[0] - k_pi3k_deg * pi3k
 
     # AKT dynamics (activated by PI3K)
-    dakt = k_akt_act * effective_pi3k * (1.0 - akt) - k_akt_deact * akt
+    # feedback[1] modulates AKT activation rate
+    dakt = k_akt_act * fb[1] * effective_pi3k * (1.0 - akt) - k_akt_deact * akt
 
     # mTOR dynamics (activated by AKT, modulated by metabolic feedback)
     # Primary metabolic feedback acts on mTOR (index 2)

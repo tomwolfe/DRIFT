@@ -491,13 +491,14 @@ class BridgeBuilder:
 class DFBASolver:
     """Dynamic Flux Balance Analysis solver."""
 
-    def __init__(self, model_name="textbook", strict=False):
+    def __init__(self, model_name="textbook", strict=False, model=None):
         """
         Initialize the DFBASolver.
 
         Args:
             model_name (str): Name of the metabolic model to use
             strict (bool): If True, raises an error if no LP solver is found.
+            model (cobra.Model, optional): Pre-loaded model object.
         """
         self.model_name = model_name
         self.strict = strict
@@ -527,7 +528,7 @@ class DFBASolver:
             }
             return
 
-        self.model = self._load_model_safe(model_name)
+        self.model = model if model is not None else self._load_model_safe(model_name)
         
         # Pareto: Immediate validation to ensure the model is actually usable.
         if self.model:
@@ -563,6 +564,29 @@ class DFBASolver:
             "status": "proxied",
             "diagnostic": "FBA results approximated via algebraic proxy"
         }
+
+    def get_fingerprint(self) -> str:
+        """
+        Generates a unique fingerprint of the current model state.
+        Used to detect in-place modifications for worker cache invalidation.
+        """
+        if self.headless or not self.model:
+            return "headless_" + str(hash(tuple(self.proxy_params.items())))
+        
+        # Capture structural and state elements
+        # We include a checksum of bounds to detect in-place modifications to the model
+        bounds_checksum = sum(r.lower_bound for r in self.model.reactions) + \
+                          sum(r.upper_bound for r in self.model.reactions)
+        
+        model_state = (
+            len(self.model.reactions),
+            len(self.model.metabolites),
+            str(self.model.objective.expression),
+            self.model.solver.interface.__name__,
+            bounds_checksum
+        )
+        import hashlib
+        return hashlib.md5(str(model_state).encode()).hexdigest()
 
     def validate_model(self):
         """
