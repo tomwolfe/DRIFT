@@ -42,7 +42,9 @@ In drug discovery, linking a molecular binding event to a systemic outcome (like
 
 - **Multi-Scale Integration:** Seamlessly couples molecular binding, stochastic signaling (SDEs), and dynamic flux balance analysis (dFBA). Supports both E. coli core and Human GEMs (e.g., Recon1).
 - **Stochastic Dynamics:** Captures cellular heterogeneity using a high-stability **Milstein scheme** integrator with state-dependent noise, accelerated by **Numba**.
+- **Global Sensitivity Analysis (GSA):** Identify critical drivers of metabolic drift by perturbing signaling parameters and binding affinity simultaneously.
 - **Monte Carlo Uncertainty:** Built-in support for ensemble simulations to assess model robustness and parameter sensitivity.
+- **Interoperability:** Export results to structured Parquet or JSON formats (aligning with SED-ML principles) for cross-platform research.
 - **Interactive Dashboards:** Generates comprehensive HTML reports using **Plotly** for deep-dive analysis of trajectories.
 - **Scientific Validation:** Benchmarked against known biological responses and numerical stability tests.
 
@@ -88,6 +90,23 @@ conda activate drift
 ```bash
 docker build -t drift .
 docker run -it drift
+```
+
+### Basic Usage
+
+Run a standard Monte Carlo simulation:
+```bash
+python main.py --mc-iterations 30 --sim-steps 100
+```
+
+Run a **Global Sensitivity Analysis** to identify key parameters:
+```bash
+python main.py --sensitivity --mc-iterations 50
+```
+
+Export results to **JSON** for downstream analysis:
+```bash
+python main.py --export-json outputs/results.json
 ```
 
 ## 🧪 Development and Testing

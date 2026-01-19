@@ -17,7 +17,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 warnings.filterwarnings("ignore", category=UserWarning)
 
 
-def main(config: SimulationConfig = None):
+def main(config: SimulationConfig = None, run_sensitivity=False, json_export=None):
     print("==========================================================")
     print("   DRIFT: Multi-Scale Stochastic Research Workbench       ")
     print("==========================================================")
@@ -27,23 +27,37 @@ def main(config: SimulationConfig = None):
         config = SimulationConfig()
 
     print(f"[*] Configuration: Kd={config.drug_kd}, [Drug]={config.drug_concentration}")
+    print(f"[*] Units: {config.concentration_unit}, {config.time_unit}")
     print(f"[*] Target Model: {config.model_name}")
 
     try:
-        # Initialize Workbench (Internal DFBASolver now handles pre-flight validation)
+        # Initialize Workbench
         workbench = Workbench(
             drug_kd=config.drug_kd,
             drug_concentration=config.drug_concentration,
             model_name=config.model_name,
+            time_unit=config.time_unit,
+            concentration_unit=config.concentration_unit
         )
 
-        results = workbench.run_monte_carlo(
-            n_sims=config.mc_iterations, steps=config.sim_steps, n_jobs=config.n_jobs
-        )
+        if run_sensitivity:
+            results = workbench.run_global_sensitivity_analysis(
+                n_sims=config.mc_iterations, steps=config.sim_steps, n_jobs=config.n_jobs
+            )
+        else:
+            results = workbench.run_monte_carlo(
+                n_sims=config.mc_iterations, steps=config.sim_steps, n_jobs=config.n_jobs
+            )
+            
         all_histories = results["histories"]
         basal_growth = results["basal_growth"]
 
         print(f"[+] Completed {len(all_histories)} simulations")
+
+        # Export JSON if requested
+        if json_export:
+            workbench.export_results_json(results, json_export)
+            print(f"[*] Results exported to JSON: {json_export}")
 
         # Calculate final mean growth to show in CLI
         final_growths = [h["growth"][-1] for h in all_histories]
@@ -59,8 +73,8 @@ def main(config: SimulationConfig = None):
 
         print("\n--- Simulation Summary ---")
         print(f"Target Inhibition:      {inhibition:.2f}%")
-        print(f"Basal Growth Rate:      {basal_growth:.4f} h⁻¹")
-        print(f"Mean Treated Growth:    {avg_final_growth:.4f} h⁻¹")
+        print(f"Basal Growth Rate:      {basal_growth:.4f} {config.time_unit}⁻¹")
+        print(f"Mean Treated Growth:    {avg_final_growth:.4f} {config.time_unit}⁻¹")
         print(f"Phenotypic Uncertainty: ±{std_final_growth:.4f} ({cv:.1f}% CV)")
         print(f"Relative Vitality:      {rel_growth:.1f}%")
         print("--------------------------\n")
@@ -109,6 +123,12 @@ def parse_args():
     parser.add_argument(
         "--output", type=str, default="drift_dashboard.html", help="Output file name"
     )
+    parser.add_argument(
+        "--sensitivity", action="store_true", help="Run Global Sensitivity Analysis"
+    )
+    parser.add_argument(
+        "--export-json", type=str, help="Export results to JSON file"
+    )
 
     return parser.parse_args()
 
@@ -135,4 +155,4 @@ if __name__ == "__main__":
 
         config = SimulationConfig(**config_kwargs)
 
-    main(config)
+    main(config, run_sensitivity=args.sensitivity, json_export=args.export_json)

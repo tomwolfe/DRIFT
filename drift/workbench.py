@@ -8,8 +8,9 @@ from concurrent.futures import ProcessPoolExecutor
 import multiprocessing as mp
 import os
 import logging
+import json
 from tqdm import tqdm
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -24,11 +25,6 @@ def _init_worker(model_name, topology=None, bridge=None):
         from .topology import get_default_topology
         eff_topology = topology or get_default_topology()
         
-        # Pareto: If we used 'fork', the model might already be in memory.
-        # But DFBASolver's model object might not be thread-safe/process-safe
-        # if shared directly across multiple active solves. 
-        # However, _worker_cache is per-process.
-        
         if "solver" not in _worker_cache:
             _worker_cache["solver"] = DFBASolver(model_name=model_name)
             _worker_cache["integrator"] = StochasticIntegrator(dt=0.1, noise_scale=0.03, topology=eff_topology)
@@ -41,7 +37,7 @@ def _init_worker(model_name, topology=None, bridge=None):
 
 def _single_sim_wrapper(args):
     """Helper to run a single simulation in a separate process."""
-    drug_kd, drug_concentration, steps, model_name, topology, bridge = args
+    drug_kd, drug_concentration, steps, model_name, topology, bridge, custom_params = args
 
     try:
         from .topology import get_default_topology
@@ -51,7 +47,6 @@ def _single_sim_wrapper(args):
         if "solver" in _worker_cache:
             solver = _worker_cache["solver"]
             integrator = _worker_cache["integrator"]
-            # If a specific bridge was passed for THIS sim, use it, otherwise use cached
             sim_bridge = bridge or _worker_cache["bridge"]
             binding = BindingEngine(kd=drug_kd)
         else:
@@ -60,6 +55,12 @@ def _single_sim_wrapper(args):
             integrator = StochasticIntegrator(dt=0.1, noise_scale=0.03, topology=eff_topology)
             sim_bridge = bridge or MetabolicBridge(species_names=eff_topology.species)
             solver = DFBASolver(model_name=model_name)
+
+        # Apply custom signaling parameters if provided
+        if custom_params:
+            for i, (p_name, p_val) in enumerate(eff_topology.parameters.items()):
+                if p_name in custom_params:
+                    integrator.base_params[i] = custom_params[p_name]
 
         inhibition = binding.calculate_inhibition(drug_concentration)
         
@@ -76,6 +77,7 @@ def _single_sim_wrapper(args):
             "death_step": None,
             "inhibition": inhibition,
             "drug_kd": drug_kd,
+            "params": custom_params or {},
         }
 
         for step in range(steps):
@@ -131,17 +133,21 @@ class Workbench:
         drug_concentration=2.0, 
         model_name="textbook", 
         topology=None,
-        bridge=None
+        bridge=None,
+        time_unit="hours",
+        concentration_unit="uM"
     ):
         """
         Initialize the Workbench with specified parameters.
 
         Args:
-            drug_kd (float): Dissociation constant of the drug
-            drug_concentration (float): Concentration of the drug in the system
+            drug_kd (float): Dissociation constant of the drug (in concentration_units)
+            drug_concentration (float): Concentration of the drug in the system (in concentration_units)
             model_name (str): Name of the metabolic model to use
             topology (Topology, optional): Signaling network topology
             bridge (MetabolicBridge, optional): Custom metabolic bridge
+            time_unit (str): Unit for time (default: "hours")
+            concentration_unit (str): Unit for concentration (default: "uM")
         """
         if drug_kd <= 0:
             raise ValueError(f"drug_kd must be positive, got {drug_kd}")
@@ -158,17 +164,18 @@ class Workbench:
         eff_topology = topology or get_default_topology()
         
         self.metabolic_bridge = bridge or MetabolicBridge(species_names=eff_topology.species)
-        # Ensure bridge has species names if it was provided without them
         if self.metabolic_bridge.species_names is None:
             self.metabolic_bridge.species_names = eff_topology.species
             
         self.solver = DFBASolver(model_name=model_name)
         self.drug_concentration = drug_concentration
         self.model_name = model_name
+        self.time_unit = time_unit
+        self.concentration_unit = concentration_unit
 
     def get_basal_growth(self, steps=100):
         """Calculates growth rate without any drug inhibition."""
-        args = (self.binding.kd, 0.0, steps, self.model_name, self.topology, self.metabolic_bridge)
+        args = (self.binding.kd, 0.0, steps, self.model_name, self.topology, self.metabolic_bridge, None)
         history = _single_sim_wrapper(args)
         return np.mean(history["growth"])
 
@@ -185,10 +192,10 @@ class Workbench:
         if steps <= 0:
             raise ValueError(f"steps must be positive, got {steps}")
 
-        args = (self.binding.kd, self.drug_concentration, steps, self.model_name, self.topology, self.metabolic_bridge)
+        args = (self.binding.kd, self.drug_concentration, steps, self.model_name, self.topology, self.metabolic_bridge, None)
         return _single_sim_wrapper(args)
 
-    def run_monte_carlo(self, n_sims=30, steps=100, n_jobs=-1):  # noqa: C901
+    def run_monte_carlo(self, n_sims=30, steps=100, n_jobs=-1, perturb_params: List[str] = None):  # noqa: C901
         """
         Runs multiple simulations with perturbed parameters in parallel.
 
@@ -196,6 +203,7 @@ class Workbench:
             n_sims (int): Number of simulations to run
             steps (int): Number of steps per simulation
             n_jobs (int): Number of parallel jobs (-1 for CPU count)
+            perturb_params (List[str]): List of signaling parameter names to perturb in addition to drug_kd.
 
         Returns:
             dict: Results containing 'histories' and 'basal_growth'
@@ -205,32 +213,37 @@ class Workbench:
         if steps <= 0:
             raise ValueError(f"steps must be positive, got {steps}")
 
-        # Get basal growth first for normalization
         print(f"[*] Establishing basal phenotypic baseline...")
         basal_growth = self.get_basal_growth(steps=steps)
-        print(f"[+] Basal Growth: {basal_growth:.4f} h⁻¹")
+        print(f"[+] Basal Growth: {basal_growth:.4f} {self.time_unit}⁻¹")
 
         if n_jobs == -1:
             n_jobs = os.cpu_count() or 1
 
         base_kd = self.binding.kd
         sim_args = []
+        from .topology import get_default_topology
+        eff_topology = self.topology or get_default_topology()
+
         for _ in range(n_sims):
             perturbed_kd = base_kd * np.random.uniform(0.8, 1.2)
+            custom_params = {}
+            if perturb_params:
+                for p_name in perturb_params:
+                    if p_name in eff_topology.parameters:
+                        custom_params[p_name] = eff_topology.parameters[p_name] * np.random.uniform(0.8, 1.2)
+
             sim_args.append(
-                (perturbed_kd, self.drug_concentration, steps, self.model_name, self.topology, self.metabolic_bridge)
+                (perturbed_kd, self.drug_concentration, steps, self.model_name, self.topology, self.metabolic_bridge, custom_params)
             )
 
         all_histories = []
-        # Progress bar logic: Always show if n_sims > 1 to provide immediate feedback
         use_tqdm = n_sims > 1
 
         print(f"[*] Starting Monte Carlo Ensemble (N={n_sims}, Workers={n_jobs})...")
 
         if n_jobs > 1:
             try:
-                # Pareto: Use 'fork' context on Unix to share model memory (Copy-on-Write)
-                # This drastically reduces RAM overhead for genome-scale models.
                 ctx = mp.get_context('fork') if hasattr(mp, 'get_context') and os.name != 'nt' else mp.get_context('spawn')
                 
                 with ProcessPoolExecutor(
@@ -254,39 +267,62 @@ class Workbench:
                         )
             except Exception as e:
                 logger.error(f"Error in multiprocessing: {str(e)}. Falling back to sequential.")
-                n_jobs = 1  # Fallback to sequential
+                n_jobs = 1
 
         if n_jobs <= 1:
             if use_tqdm:
                 for args in tqdm(sim_args, desc="Sequential Simulations", leave=False):
                     all_histories.append(_single_sim_wrapper(args))
-                    # Pareto: Early feedback for sequential runs
-                    if len(all_histories) == 1:
-                        first_growth = np.mean(all_histories[0]["growth"])
-                        vitality = (first_growth / basal_growth) * 100 if basal_growth > 0 else 0
-                        print(f"[*] Early Pulse: First simulation shows {vitality:.1f}% vitality.")
             else:
                 for args in sim_args:
                     all_histories.append(_single_sim_wrapper(args))
 
-        # Pareto: Final summary report
         dead_count = sum(1 for h in all_histories if h.get("cell_death", False))
         if dead_count > 0:
             print(f"[!] Warning: {dead_count}/{n_sims} simulations resulted in metabolic collapse (Cell Death).")
 
         return {"histories": all_histories, "basal_growth": basal_growth}
 
+    def run_global_sensitivity_analysis(self, n_sims=50, steps=100, n_jobs=-1):
+        """
+        Performs Global Sensitivity Analysis (GSA) to identify drivers of metabolic drift.
+        Perturbs all signaling parameters and K_d, then calculates correlations with growth.
+        """
+        print(f"[*] Starting Global Sensitivity Analysis (N={n_sims})...")
+        
+        # Identify all parameters to perturb
+        from .topology import get_default_topology
+        eff_topology = self.topology or get_default_topology()
+        params_to_perturb = list(eff_topology.parameters.keys())
+        
+        results = self.run_monte_carlo(n_sims=n_sims, steps=steps, n_jobs=n_jobs, perturb_params=params_to_perturb)
+        
+        # Calculate sensitivity indices (Pearson correlation with final growth)
+        data = []
+        for h in results["histories"]:
+            row = {"growth": np.mean(h["growth"]), "drug_kd": h["drug_kd"]}
+            row.update(h["params"])
+            data.append(row)
+        
+        df = pd.DataFrame(data)
+        correlations = df.corr()["growth"].drop("growth").sort_values(ascending=False)
+        
+        print("\n[+] Sensitivity Analysis Results (Correlation with Growth):")
+        for param, corr in correlations.items():
+            print(f"    - {param:20}: {corr: .4f}")
+            
+        results["sensitivity"] = correlations.to_dict()
+        return results
+
     def export_results(self, results: Dict[str, Any], file_path: str):
         """
         Exports Monte Carlo results to a structured Parquet file.
-
-        Args:
-            results (dict): Output from run_monte_carlo
-            file_path (str): Destination path (.parquet)
         """
         all_data = []
         histories = results.get("histories", [])
-        species_names = self.topology.species if self.topology else ["PI3K", "AKT", "mTOR"]
+        from .topology import get_default_topology
+        eff_topology = self.topology or get_default_topology()
+        species_names = eff_topology.species
 
         for sim_idx, hist in enumerate(histories):
             for step_idx in range(len(hist["time"])):
@@ -294,20 +330,62 @@ class Workbench:
                     "sim_id": sim_idx,
                     "step": step_idx,
                     "time": hist["time"][step_idx],
+                    "time_unit": self.time_unit,
                     "growth": hist["growth"][step_idx],
                     "drug_kd": hist["drug_kd"],
+                    "concentration_unit": self.concentration_unit,
                     "inhibition": hist.get("inhibition", 0.0),
                 }
                 # Add signaling species
                 for i, species in enumerate(species_names):
                     row[species] = hist["signaling"][step_idx, i]
                 
+                # Add custom parameters
+                for p_name, p_val in hist.get("params", {}).items():
+                    row[f"param_{p_name}"] = p_val
+                
                 all_data.append(row)
 
         df = pd.DataFrame(all_data)
-        
-        # Ensure directory exists
         os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
-        
         df.to_parquet(file_path, index=False)
         logger.info(f"Successfully exported {len(all_data)} rows to {file_path}")
+
+    def export_results_json(self, results: Dict[str, Any], file_path: str):
+        """
+        Exports results to a JSON format for broader compatibility (SED-ML like structure).
+        """
+        export_data = {
+            "metadata": {
+                "model_name": self.model_name,
+                "time_unit": self.time_unit,
+                "concentration_unit": self.concentration_unit,
+                "basal_growth": results.get("basal_growth"),
+                "drug_concentration": self.drug_concentration
+            },
+            "simulations": []
+        }
+
+        for i, hist in enumerate(results.get("histories", [])):
+            sim_entry = {
+                "id": i,
+                "drug_kd": hist["drug_kd"],
+                "params": hist.get("params", {}),
+                "cell_death": hist.get("cell_death", False),
+                "death_step": hist.get("death_step"),
+                "data": {
+                    "time": hist["time"].tolist(),
+                    "growth": hist["growth"].tolist(),
+                    "signaling": hist["signaling"].tolist()
+                }
+            }
+            export_data["simulations"].append(sim_entry)
+
+        if "sensitivity" in results:
+            export_data["sensitivity"] = results["sensitivity"]
+
+        os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
+        with open(file_path, "w") as f:
+            json.dump(export_data, f, indent=2)
+        logger.info(f"Successfully exported results to {file_path}")
+

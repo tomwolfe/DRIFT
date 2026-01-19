@@ -80,7 +80,11 @@ class TestMainModule(unittest.TestCase):
 
         # Verify that workbench was initialized with correct parameters
         mock_workbench_class.assert_called_once_with(
-            drug_kd=0.5, drug_concentration=1.0, model_name="textbook"
+            drug_kd=0.5, 
+            drug_concentration=1.0, 
+            model_name="textbook",
+            time_unit="hours",
+            concentration_unit="uM"
         )
 
         # Verify that run_monte_carlo was called with correct parameters

@@ -16,9 +16,11 @@ class SimulationConfig:
     # Simulation parameters
     sim_steps: int = 100  # Time-steps for simulation
     mc_iterations: int = 30  # Number of Monte Carlo simulations
+    time_unit: str = "hours"  # Unit for time-steps
+    concentration_unit: str = "uM"  # Unit for drug concentration
 
     # Signaling parameters
-    dt: float = 0.1  # Time step for integrator
+    dt: float = 0.1  # Time step for integrator (in time_units)
     noise_scale: float = 0.03  # Noise scale for stochastic integrator
 
     # Model parameters
@@ -59,10 +61,11 @@ class SimulationConfig:
     def from_dict(cls, config_dict: Dict[str, Any]):
         """Create a SimulationConfig from a dictionary."""
         # Filter out keys that aren't in the dataclass
-        filtered_dict = {
-            k: v for k, v in config_dict.items() if k in cls.__annotations__
-        }
-        return cls(**filtered_dict)
+        # We use annotations to get valid fields
+        return cls(**{
+            k: v for k, v in config_dict.items() 
+            if k in cls.__dataclass_fields__
+        })
 
     @classmethod
     def from_json_file(cls, filepath: str):
@@ -78,6 +81,8 @@ class SimulationConfig:
             "drug_concentration": self.drug_concentration,
             "sim_steps": self.sim_steps,
             "mc_iterations": self.mc_iterations,
+            "time_unit": self.time_unit,
+            "concentration_unit": self.concentration_unit,
             "dt": self.dt,
             "noise_scale": self.noise_scale,
             "model_name": self.model_name,
