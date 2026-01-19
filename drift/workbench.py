@@ -17,7 +17,30 @@ logger = logging.getLogger(__name__)
 
 # Global cache for workers to avoid reloading model
 # Key format: (model_name, topology_name, bridge_hash)
-_worker_cache: Dict[tuple[str, str], Any] = {}
+_worker_cache: Dict[tuple[str, str, int], Any] = {}
+
+
+def _get_bridge_hash(bridge: Optional[MetabolicBridge]) -> int:
+    """Generates a stable hash for a MetabolicBridge configuration."""
+    if bridge is None:
+        return 0
+    # Simple hash based on mappings and reverse_mappings
+    try:
+        # Use json.dumps for a stable string representation, though we need to handle potential non-serializable mapping_fn
+        # For Pareto, we'll just hash the core structure
+        mapping_data = []
+        if hasattr(bridge, 'mappings'):
+            for m in bridge.mappings:
+                # Copy and remove non-serializable
+                m_copy = m.copy()
+                if 'mapping_fn' in m_copy:
+                    m_copy['mapping_fn'] = str(m_copy['mapping_fn'])
+                mapping_data.append(m_copy)
+        
+        rev_mapping_data = getattr(bridge, 'reverse_mappings', [])
+        return hash(json.dumps([mapping_data, rev_mapping_data], sort_keys=True))
+    except Exception:
+        return id(bridge)
 
 
 def _init_worker(model_name, topology=None, bridge=None):
@@ -27,11 +50,13 @@ def _init_worker(model_name, topology=None, bridge=None):
         eff_topology = topology or get_default_topology()
         
         # Create a unique key for this configuration
-        cache_key = (model_name, eff_topology.name)
+        bridge_hash = _get_bridge_hash(bridge)
+        cache_key = (model_name, eff_topology.name, bridge_hash)
         
         if cache_key not in _worker_cache:
+            solver = DFBASolver(model_name=model_name)
             _worker_cache[cache_key] = {
-                "solver": DFBASolver(model_name=model_name),
+                "solver": solver,
                 "integrator": StochasticIntegrator(dt=0.1, noise_scale=0.03, topology=eff_topology),
                 "bridge": bridge or MetabolicBridge(species_names=eff_topology.species)
             }
@@ -43,12 +68,13 @@ def _init_worker(model_name, topology=None, bridge=None):
 
 def _single_sim_wrapper(args):
     """Helper to run a single simulation in a separate process."""
-    drug_kd, drug_concentration, steps, model_name, topology, bridge, custom_params = args
+    drug_kd, drug_concentration, steps, model_name, topology, bridge, custom_params, sub_steps, refine_feedback = args
 
     try:
         from .topology import get_default_topology
         eff_topology = topology or get_default_topology()
-        cache_key = (model_name, eff_topology.name)
+        bridge_hash = _get_bridge_hash(bridge)
+        cache_key = (model_name, eff_topology.name, bridge_hash)
 
         # Reuse cached components if they exist
         if cache_key in _worker_cache:
@@ -88,6 +114,8 @@ def _single_sim_wrapper(args):
             "params": custom_params or {},
         }
 
+        dt_small = integrator.dt / sub_steps
+
         for step in range(steps):
             if history["cell_death"]:
                 # Once dead, stay dead
@@ -96,14 +124,40 @@ def _single_sim_wrapper(args):
                 history["status"].append("dead")
                 continue
 
-            # 1. Signaling step (influenced by previous metabolic feedback)
-            state = integrator.step(state, inhibition, feedback=feedback)
+            state_old = state.copy()
+            feedback_old = feedback.copy()
+
+            # 1. Predictor signaling step
+            for _ in range(sub_steps):
+                orig_dt = integrator.dt
+                integrator.dt = dt_small
+                state = integrator.step(state, inhibition, feedback=feedback)
+                integrator.dt = orig_dt
             
             # 2. Metabolic mapping (Signaling -> Metabolism)
             constraints = sim_bridge.get_constraints(state)
             
             # 3. FBA solver
             fba_result = solver.solve_step(constraints)
+            
+            if refine_feedback and fba_result["status"] == "optimal":
+                # Predictor-Corrector: 
+                # Use predicted feedback to re-run signaling for better accuracy
+                feedback_pred = sim_bridge.get_feedback(fba_result["fluxes"])
+                avg_feedback = (feedback_old + feedback_pred) / 2.0
+                
+                # Reset and correct signaling
+                state = state_old.copy()
+                for _ in range(sub_steps):
+                    orig_dt = integrator.dt
+                    integrator.dt = dt_small
+                    state = integrator.step(state, inhibition, feedback=avg_feedback)
+                    integrator.dt = orig_dt
+                
+                # Re-run FBA with corrected state
+                constraints = sim_bridge.get_constraints(state)
+                fba_result = solver.solve_step(constraints)
+
             growth = fba_result["objective_value"]
             fluxes = fba_result["fluxes"]
             status = fba_result["status"]
@@ -117,7 +171,6 @@ def _single_sim_wrapper(args):
                 growth = 0.0
                 feedback = np.zeros(len(eff_topology.species))  # Total metabolic collapse
             else:
-                # 4. Feedback mapping (Metabolism -> Signaling)
                 feedback = sim_bridge.get_feedback(fluxes)
 
             history["signaling"].append(state.copy())
@@ -143,7 +196,9 @@ class Workbench:
         topology=None,
         bridge=None,
         time_unit="hours",
-        concentration_unit="uM"
+        concentration_unit="uM",
+        sub_steps=5,
+        refine_feedback=False
     ):
         """
         Initialize the Workbench with specified parameters.
@@ -156,6 +211,8 @@ class Workbench:
             bridge (MetabolicBridge, optional): Custom metabolic bridge
             time_unit (str): Unit for time (default: "hours")
             concentration_unit (str): Unit for concentration (default: "uM")
+            sub_steps (int): Number of signaling sub-steps per metabolic step (default: 5)
+            refine_feedback (bool): If True, uses a predictor-corrector step for metabolic feedback.
         """
         if drug_kd <= 0:
             raise ValueError(f"drug_kd must be positive, got {drug_kd}")
@@ -176,14 +233,21 @@ class Workbench:
             self.metabolic_bridge.species_names = eff_topology.species
             
         self.solver = DFBASolver(model_name=model_name)
+        if self.solver.headless:
+            print("[!] WARNING: DFBASolver is in HEADLESS mode. No COBRA-compatible LP solver found.")
+            print("    Multi-scale feedback will be disabled. Install 'swiglpk' to enable FBA.")
+            logger.warning("Workbench initialized with headless DFBASolver.")
+
         self.drug_concentration = drug_concentration
         self.model_name = model_name
         self.time_unit = time_unit
         self.concentration_unit = concentration_unit
+        self.sub_steps = sub_steps
+        self.refine_feedback = refine_feedback
 
     def get_basal_growth(self, steps=100):
         """Calculates growth rate without any drug inhibition."""
-        args = (self.binding.kd, 0.0, steps, self.model_name, self.topology, self.metabolic_bridge, None)
+        args = (self.binding.kd, 0.0, steps, self.model_name, self.topology, self.metabolic_bridge, None, self.sub_steps, self.refine_feedback)
         history = _single_sim_wrapper(args)
         return np.mean(history["growth"])
 
@@ -200,7 +264,7 @@ class Workbench:
         if steps <= 0:
             raise ValueError(f"steps must be positive, got {steps}")
 
-        args = (self.binding.kd, self.drug_concentration, steps, self.model_name, self.topology, self.metabolic_bridge, None)
+        args = (self.binding.kd, self.drug_concentration, steps, self.model_name, self.topology, self.metabolic_bridge, None, self.sub_steps, self.refine_feedback)
         return _single_sim_wrapper(args)
 
     def _history_to_rows(self, hist, sim_idx):
@@ -287,7 +351,7 @@ class Workbench:
                         custom_params[p_name] = eff_topology.parameters[p_name] * np.random.uniform(0.8, 1.2)
 
             sim_args.append(
-                (perturbed_kd, self.drug_concentration, steps, self.model_name, self.topology, self.metabolic_bridge, custom_params)
+                (perturbed_kd, self.drug_concentration, steps, self.model_name, self.topology, self.metabolic_bridge, custom_params, self.sub_steps, self.refine_feedback)
             )
 
         print(f"[*] Starting Monte Carlo Ensemble (N={n_sims}, Workers={n_jobs})...")

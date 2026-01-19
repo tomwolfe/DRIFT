@@ -335,9 +335,10 @@ class DFBASolver:
         self.model_name = model_name
         self.strict = strict
         self.available_solvers = self._check_solver()
+        self.headless = not self.available_solvers
         
         # Headless mode: If no solvers, don't attempt to load or validate
-        if not self.available_solvers:
+        if self.headless:
             if self.strict:
                 raise RuntimeError(
                     "DFBASolver: No LP solver found and 'strict' mode is enabled. "

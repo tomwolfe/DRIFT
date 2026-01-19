@@ -84,12 +84,42 @@ class Topology:
             
         name = model.getName() or model.getId() or "sbml_topology"
         logger.info(f"Imported SBML model: {name}")
-        
+
+        # Attempt to create a drift function using RoadRunner if available
+        drift_fn = None
+        try:
+            import roadrunner
+            def rr_drift_fn(state, params, inhibition=0.0, feedback=None):
+                rr = roadrunner.RoadRunner(sbml_path)
+                rr.reset()
+                # Map state to species
+                for i, s_id in enumerate(species):
+                    rr[s_id] = state[i]
+                
+                # Apply inhibition if target is known
+                if inhibited_species:
+                    rr[inhibited_species] *= (1.0 - inhibition)
+                
+                # Apply feedback if provided (this is tricky for generic SBML)
+                # For now, we scale all rates if feedback is a scalar
+                if feedback is not None and isinstance(feedback, (float, int)):
+                    rr.model.setGlobalParameterValues(rr.model.getGlobalParameterIds(), 
+                                                     [v * feedback for v in rr.model.getGlobalParameterValues()])
+
+                # Get rates of change
+                return rr.getRatesOfChange()
+            
+            drift_fn = rr_drift_fn
+            logger.info("Successfully formalized SBML logic using libRoadRunner.")
+        except ImportError:
+            logger.debug("libRoadRunner not found, SBML drift will use default decay logic.")
+
         return cls(
             species=species,
             parameters=parameters,
             name=name,
-            inhibited_species=inhibited_species
+            inhibited_species=inhibited_species,
+            drift_fn=drift_fn
         )
 
     @classmethod
