@@ -99,8 +99,8 @@ def create_dashboard(results):
             "Growth Rate Trajectories (%)",
             "Phenotypic Uncertainty Envelope (%)",
         ),
-        vertical_spacing=0.15,
-        horizontal_spacing=0.1,
+        vertical_spacing=0.2,
+        horizontal_spacing=0.15,
         specs=[
             [{"type": "scatter"}, {"type": "scatter"}],
             [{"type": "scatter"}, {"type": "scatter"}],
@@ -160,7 +160,7 @@ def create_dashboard(results):
 
     # 2. Sampled Trajectories (Top Left & Bottom Left)
     # Pareto: Only plot a limited number of traces to avoid Plotly lag
-    max_traces = 5
+    max_traces = 3
     if n_sims > 50:
         sample_indices = np.linspace(0, n_sims - 1, max_traces, dtype=int)
     else:
@@ -298,12 +298,12 @@ def create_dashboard(results):
         ),
         xref="paper",
         yref="paper",
-        x=1.15,
-        y=0.5,
+        x=1.1,
+        y=0.85,
         showarrow=False,
         align="left",
-        bgcolor="rgba(255,255,255,0.8)",
-        bordercolor="black",
+        bgcolor="rgba(255,255,255,0.9)",
+        bordercolor="SlateGray",
         borderwidth=1,
         borderpad=10,
     )
@@ -320,14 +320,15 @@ def create_dashboard(results):
         ),
         xref="paper",
         yref="paper",
-        x=1.15,
-        y=0.1,
+        x=1.1,
+        y=0.15,
         showarrow=False,
         align="left",
-        bgcolor="rgba(230,240,255,0.9)",
-        bordercolor="blue",
+        bgcolor="rgba(255,255,255,0.9)",
+        bordercolor="SlateGray",
         borderwidth=1,
         borderpad=10,
+        font=dict(size=11),
     )
 
     # Update Axes
@@ -337,17 +338,23 @@ def create_dashboard(results):
     fig.update_xaxes(title_text="Time (Integration Steps)", row=2, col=2)
 
     fig.update_yaxes(title_text="Protein Activity [0,1]", row=1, col=1)
-    fig.update_yaxes(title_text="Final Growth (% Basal)", row=1, col=2)
+    fig.update_yaxes(title_text="Final Growth (% Basal)", row=1, col=2, title_standoff=20)
     fig.update_yaxes(title_text="Growth Rate (% Basal)", row=2, col=1)
-    fig.update_yaxes(title_text="Ensemble Growth (% Basal)", row=2, col=2)
+    fig.update_yaxes(title_text="Ensemble Growth (% Basal)", row=2, col=2, title_standoff=20)
 
     title_suffix = " (HEADLESS - QUALITATIVE PROXY)" if is_headless else ""
     fig.update_layout(
         height=850,
         title_text=f"<b>DRIFT: Multi-Scale Stochastic Research Workbench{title_suffix}</b><br>Multi-Scale Phenotypic Response Dashboard",
         template="plotly_white",
-        legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.02),
-        margin=dict(r=250, t=100),  # Increased right margin for annotations
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=-0.1,
+            xanchor="center",
+            x=0.5
+        ),
+        margin=dict(r=300, t=100, b=100),  # Increased right margin for annotations, added bottom for legend
     )
 
     return fig
