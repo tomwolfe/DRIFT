@@ -26,35 +26,35 @@ def fuzzy_match_reaction_id(query_id: str, model_reaction_ids: List[str], simila
     """
     Attempts to find a matching reaction ID in the model using common variations.
     Handles 'EX_' prefixes, case sensitivity, and double underscores.
-    
+
     Returns:
         Optional[str]: The matched ID, or None if no match or multiple ambiguous matches found.
     """
     if query_id in model_reaction_ids:
         # Exact match is always preferred and unambiguous
         return query_id
-    
+
     matches = []
-    
+
     # Try case-insensitive (check for ALL matches)
     query_lower = query_id.lower()
     for rid in model_reaction_ids:
         if rid.lower() == query_lower:
             matches.append(rid)
-    
+
     # Generate variations
     variations = []
-    
+
     # 1. Prefix variations
     if query_id.upper().startswith("EX_"):
         variations.append(query_id[3:])
     else:
         variations.append(f"EX_{query_id}")
-    
+
     # 2. Underscore variations
     if "__" in query_id:
         variations.append(query_id.replace("__", "_"))
-    
+
     # 3. Combine prefix and underscore variations
     # If we added 'EX_', also try it with underscore replacement
     if not query_id.upper().startswith("EX_") and "__" in query_id:
@@ -69,27 +69,60 @@ def fuzzy_match_reaction_id(query_id: str, model_reaction_ids: List[str], simila
         for rid in model_reaction_ids:
             if rid == var or rid.lower() == var_lower:
                 matches.append(rid)
-            
+
     # Deduplicate matches
     unique_matches = list(set(matches))
-    
+
     # Similarity check for extra safety (Pareto 80/20 fix for matching risk)
     final_matches = []
     for match in unique_matches:
         similarity = difflib.SequenceMatcher(None, query_id.lower(), match.lower()).ratio()
-        if similarity >= similarity_threshold:
-            final_matches.append(match)
-        else:
-            logger.debug(f"Fuzzy match '{match}' rejected for '{query_id}' due to low similarity ({similarity:.2f} < {similarity_threshold})")
 
-    if len(final_matches) == 1:
-        return final_matches[0]
-    elif len(final_matches) > 1:
-        logger.warning(f"Ambiguous fuzzy match for '{query_id}': multiple potential matches found {final_matches}. "
-                       "Aborting match for safety. Please use explicit IDs.")
-        return None
-            
+        # Apply more lenient threshold for common patterns like missing EX_ prefix
+        effective_threshold = similarity_threshold
+        if _is_common_pattern_match(query_id, match):
+            # For common patterns like missing EX_ prefix, use a slightly lower threshold
+            effective_threshold = max(0.75, similarity_threshold - 0.1)
+
+        if similarity >= effective_threshold:
+            final_matches.append((match, similarity))
+        else:
+            logger.debug(f"Fuzzy match '{match}' rejected for '{query_id}' due to low similarity ({similarity:.2f} < {effective_threshold})")
+
+    # Extract just the matches, keeping track of the best similarity
+    if final_matches:
+        # Sort by similarity to return the best match
+        final_matches.sort(key=lambda x: x[1], reverse=True)
+        final_match_list = [match for match, sim in final_matches]
+
+        if len(final_match_list) == 1:
+            return final_match_list[0]
+        elif len(final_match_list) > 1:
+            logger.warning(f"Ambiguous fuzzy match for '{query_id}': multiple potential matches found {final_match_list}. "
+                           "Aborting match for safety. Please use explicit IDs.")
+            return None
+
     return None
+
+
+def _is_common_pattern_match(query_id: str, match_id: str) -> bool:
+    """
+    Determines if the match represents a common predictable pattern that should be treated more leniently.
+    Common patterns include missing/excess EX_ prefixes, case differences, etc.
+    """
+    # Check for missing EX_ prefix pattern: query "glc__D_e" vs match "EX_glc__D_e"
+    if match_id.upper().startswith("EX_") and (query_id == match_id[3:] or query_id.lower() == match_id[3:].lower()):
+        return True
+
+    # Check for excess EX_ prefix pattern: query "EX_glc__D_e" vs match "glc__D_e"
+    if query_id.upper().startswith("EX_") and (match_id == query_id[3:] or match_id.lower() == query_id[3:].lower()):
+        return True
+
+    # Check for case-only differences
+    if query_id.lower() == match_id.lower() and query_id != match_id:
+        return True
+
+    return False
 
 
 class MetabolicBridge:
