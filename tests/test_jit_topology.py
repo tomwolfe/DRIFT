@@ -1,43 +1,54 @@
-import pytest
 import numpy as np
 from numba import njit
-from drift.signaling import StochasticIntegrator, create_langevin_integrator
 from drift.topology import Topology
+from drift.signaling import StochasticIntegrator
+import pytest
 
 @njit
-def custom_drift_fn(state, params, feedback=1.0):
-    # Simple decay modulated by feedback
-    return -params[0] * state * (2.0 - feedback)
+def custom_drift_fn(state, params, feedback=None):
+    """Simple drift: decay to 0.5"""
+    res = 0.1 * (0.5 - state)
+    return res
 
-def test_jitted_custom_topology():
-    """Test that custom jitted topologies work and are faster (implicitly)."""
-    # Create jitted step function
-    jitted_step = create_langevin_integrator(custom_drift_fn)
-    
-    # Create topology with jitted step
-    topology = Topology(
+def test_auto_jit_custom_topology():
+    # Create a topology with a jitted drift function
+    topo = Topology(
         species=["S1"],
         parameters={"k": 0.1},
-        jitted_step_fn=jitted_step,
-        name="jitted_custom"
+        drift_fn=custom_drift_fn,
+        name="JitTest"
     )
     
-    integrator = StochasticIntegrator(topology=topology)
+    assert topo.jitted_step_fn is None
     
-    initial_state = np.array([1.0])
-    inhibition = 0.5
-    feedback = 1.0
+    # Initializing StochasticIntegrator should trigger auto-jit
+    integrator = StochasticIntegrator(topology=topo)
     
-    # Test step
-    new_state = integrator.step(initial_state, inhibition, feedback=feedback)
+    assert topo.jitted_step_fn is not None
+    assert type(topo.jitted_step_fn).__name__ == "CPUDispatcher"
+    
+    # Test a step
+    state = np.array([0.8])
+    new_state = integrator.step(state, inhibition=0.0)
     
     assert new_state.shape == (1,)
-    assert 0 <= new_state[0] <= 1.0
-    # Since it's a decay, it should generally decrease (ignoring noise)
-    # But with noise it might increase. Let's just check it runs without error.
+    assert new_state[0] < 0.8 # Should decay towards 0.5
+
+def test_no_jit_for_normal_fn():
+    def normal_drift(state, params, inhibition=0.0, feedback=None):
+        return 0.1 * (0.5 - state)
+        
+    topo = Topology(
+        species=["S1"],
+        parameters={"k": 0.1},
+        drift_fn=normal_drift,
+        name="NoJitTest"
+    )
     
-    # Run multiple steps to ensure stability
-    state = initial_state
-    for _ in range(10):
-        state = integrator.step(state, inhibition, feedback=feedback)
-        assert 0 <= state[0] <= 1.0
+    integrator = StochasticIntegrator(topology=topo)
+    
+    # Should NOT be jitted
+    assert topo.jitted_step_fn is None
+
+if __name__ == "__main__":
+    pytest.main([__file__])

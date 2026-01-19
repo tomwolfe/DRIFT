@@ -69,10 +69,12 @@ def create_dashboard(results):
         plotly.graph_objects.Figure: Interactive dashboard figure
     """
     all_histories = results.get("histories", [])
-    basal_growth = results.get("basal_growth", 0.1)  # Fallback
+    basal_growth = results.get("basal_growth", 1.0) or 1.0  # Guard against zero/None
 
     if not all_histories:
         raise ValueError("all_histories cannot be empty")
+
+    is_headless = all_histories[0].get("headless", False)
 
     # Pareto: Decimation for performance scaling
     original_time = all_histories[0]["time"]
@@ -157,8 +159,12 @@ def create_dashboard(results):
     }
 
     # 2. Sampled Trajectories (Top Left & Bottom Left)
-    max_traces = 3
-    sample_indices = np.linspace(0, n_sims - 1, min(n_sims, max_traces), dtype=int)
+    # Pareto: Only plot a limited number of traces to avoid Plotly lag
+    max_traces = 5
+    if n_sims > 50:
+        sample_indices = np.linspace(0, n_sims - 1, max_traces, dtype=int)
+    else:
+        sample_indices = np.arange(min(n_sims, max_traces))
 
     for i in sample_indices:
         hist = all_histories[i]
@@ -206,9 +212,24 @@ def create_dashboard(results):
         )
 
     # 3. Uncertainty Envelope (Bottom Right)
-    growths_pct = np.array([(h["growth"] / basal_growth) * 100 for h in all_histories])
-    mean_growth = np.mean(growths_pct, axis=0)
-    std_growth = np.std(growths_pct, axis=0)
+    # Memory-optimized stats calculation: Avoid one giant 2D matrix if n_sims is large
+    if n_sims < 200:
+        growths_pct_mat = np.array([(h["growth"] / basal_growth) * 100 for h in all_histories])
+        mean_growth = np.mean(growths_pct_mat, axis=0)
+        std_growth = np.std(growths_pct_mat, axis=0)
+    else:
+        # Incremental calculation to save memory
+        sum_growth = np.zeros(n_steps)
+        sum_growth_sq = np.zeros(n_steps)
+        for h in all_histories:
+            g = (h["growth"] / basal_growth) * 100
+            sum_growth += g
+            sum_growth_sq += g**2
+        
+        mean_growth = sum_growth / n_sims
+        # Var = E[X^2] - (E[X])^2
+        var_growth = (sum_growth_sq / n_sims) - (mean_growth**2)
+        std_growth = np.sqrt(np.maximum(var_growth, 0)) # Max to avoid tiny numerical negatives
     
     if decimate:
         mean_growth = mean_growth[indices]
@@ -259,13 +280,20 @@ def create_dashboard(results):
     # Metadata Annotation for User Context
     inhibition = all_histories[0].get("inhibition", 0) * 100
     mean_vitality = np.mean(final_growths_pct)
+    
+    status_msg = "METABOLISM ACTIVE"
+    status_color = "green"
+    if is_headless:
+        status_msg = "HEADLESS MODE (NO FEEDBACK)"
+        status_color = "red"
 
     fig.add_annotation(
         text=(
             f"<b>Summary Statistics</b><br>"
             f"Target Inhibition: {inhibition:.1f}%<br>"
             f"Mean Vitality: {mean_vitality:.1f}% of basal<br>"
-            f"MC Iterations: {n_sims}"
+            f"MC Iterations: {n_sims}<br>"
+            f"<span style='color:{status_color}'><b>{status_msg}</b></span>"
         ),
         xref="paper",
         yref="paper",
@@ -312,12 +340,14 @@ def create_dashboard(results):
     fig.update_yaxes(title_text="Growth Rate (% Basal)", row=2, col=1)
     fig.update_yaxes(title_text="Ensemble Growth (% Basal)", row=2, col=2)
 
+    title_suffix = " (HEADLESS)" if is_headless else ""
     fig.update_layout(
         height=850,
-        title_text="<b>DRIFT: Multi-Scale Stochastic Research Workbench</b><br>Multi-Scale Phenotypic Response Dashboard",
+        title_text=f"<b>DRIFT: Multi-Scale Stochastic Research Workbench{title_suffix}</b><br>Multi-Scale Phenotypic Response Dashboard",
         template="plotly_white",
         legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.02),
         margin=dict(r=250, t=100),  # Increased right margin for annotations
     )
 
     return fig
+

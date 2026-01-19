@@ -1,8 +1,11 @@
 import numpy as np
 from numba import njit
+import logging
 
 
 from .topology import Topology, get_default_topology
+
+logger = logging.getLogger(__name__)
 
 
 @njit
@@ -169,6 +172,13 @@ class StochasticIntegrator:
         # Default kinetic parameters
         self.base_params = np.array(list(self.topology.parameters.values()))
         
+        # Performance optimization: Auto-jit custom topologies if a jitted drift is provided
+        # This addresses the 'performance cliff' for custom topologies identified in audit.
+        if self.topology.jitted_step_fn is None and self.topology.drift_fn is not None:
+            if type(self.topology.drift_fn).__name__ == "CPUDispatcher":
+                logger.info(f"Auto-jitting integrator for custom topology: {self.topology.name}")
+                self.topology.jitted_step_fn = create_langevin_integrator(self.topology.drift_fn)
+
         # Stability check
         self._check_stability()
 
