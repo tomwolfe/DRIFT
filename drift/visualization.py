@@ -281,10 +281,10 @@ def create_dashboard(results):
     inhibition = all_histories[0].get("inhibition", 0) * 100
     mean_vitality = np.mean(final_growths_pct)
     
-    status_msg = "METABOLISM ACTIVE"
+    status_msg = "METABOLISM: ACTIVE (COBRA)"
     status_color = "green"
     if is_headless:
-        status_msg = "HEADLESS MODE (NO FEEDBACK)"
+        status_msg = "METABOLISM: HEADLESS (QUALITATIVE PROXY)"
         status_color = "red"
 
     fig.add_annotation(
@@ -293,7 +293,8 @@ def create_dashboard(results):
             f"Target Inhibition: {inhibition:.1f}%<br>"
             f"Mean Vitality: {mean_vitality:.1f}% of basal<br>"
             f"MC Iterations: {n_sims}<br>"
-            f"<span style='color:{status_color}'><b>{status_msg}</b></span>"
+            f"<span style='color:{status_color}'><b>{status_msg}</b></span><br>"
+            f"{'<i>Note: Proxy results not for publication.</i>' if is_headless else ''}"
         ),
         xref="paper",
         yref="paper",
@@ -340,7 +341,7 @@ def create_dashboard(results):
     fig.update_yaxes(title_text="Growth Rate (% Basal)", row=2, col=1)
     fig.update_yaxes(title_text="Ensemble Growth (% Basal)", row=2, col=2)
 
-    title_suffix = " (HEADLESS)" if is_headless else ""
+    title_suffix = " (HEADLESS - QUALITATIVE PROXY)" if is_headless else ""
     fig.update_layout(
         height=850,
         title_text=f"<b>DRIFT: Multi-Scale Stochastic Research Workbench{title_suffix}</b><br>Multi-Scale Phenotypic Response Dashboard",

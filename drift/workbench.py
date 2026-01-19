@@ -214,10 +214,10 @@ class Workbench:
         if self.solver.headless:
             print("\n" + "!"*80)
             print("!!! WARNING: DFBASolver is in HEADLESS mode. No COBRA-compatible LP solver found. !!!")
-            print("!!! Multi-scale feedback will be DISABLED. Signaling will run WITHOUT feedback.   !!!")
+            print("!!! Metabolism is PROXIED (QUALITATIVE ONLY). Signaling will run with PROXIED feedback. !!!")
             print("!!! To fix this, install a solver: pip install swiglpk                          !!!")
             print("!"*80 + "\n")
-            logger.warning("Workbench initialized with headless DFBASolver.")
+            logger.warning("Workbench initialized with headless DFBASolver (QUALITATIVE ONLY).")
         else:
             # Validate bridge against model IDs
             self.metabolic_bridge.validate_with_model(self.solver.model)

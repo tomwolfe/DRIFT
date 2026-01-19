@@ -45,7 +45,7 @@ class SimulationEngine:
         inhibition = self.binding.calculate_inhibition(drug_concentration)
         
         if self.solver.headless:
-            logger.warning("SimulationEngine: Running in HEADLESS mode. Metabolism is disabled.")
+            logger.warning("SimulationEngine: Running in HEADLESS mode. Metabolism is PROXIED (QUALITATIVE RESULTS ONLY).")
 
         # Initial state from topology
         state = self.integrator.topology.get_initial_state()

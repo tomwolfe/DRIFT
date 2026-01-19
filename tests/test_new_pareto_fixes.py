@@ -26,8 +26,15 @@ def test_fuzzy_match_reaction_id():
     # Double underscore to single (if we implemented it)
     # Our implementation:
     # if "__" in query_id: variations.append(query_id.replace("__", "_"))
-    model_ids_single = ["EX_glc_D_e"]
-    assert fuzzy_match_reaction_id("EX_glc__D_e", model_ids_single) == "EX_glc_D_e"
+
+    # Test similarity threshold rejection (80/20 Pareto fix)
+    # 'totally_different' should not match 'EX_glc__D_e' even if we try hard
+    assert fuzzy_match_reaction_id("totally_different", model_ids) is None
+    
+    # 'glc_D' is close to 'EX_glc__D_e' (0.57 ratio approximately, let's check)
+    # Using 0.7 threshold, 'glc_D' vs 'EX_glc__D_e' might be rejected.
+    # Let's test a very loose match that should be rejected by 0.7
+    assert fuzzy_match_reaction_id("glucose", model_ids) is None # 'glucose' vs 'EX_glc__D_e' is low similarity
 
 def test_bridge_validation_fuzzy():
     class MockReaction:

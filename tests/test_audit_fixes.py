@@ -10,7 +10,8 @@ def test_generalized_feedback_impact():
     """Verify that feedback on PI3K and AKT (newly added) actually affects results."""
     # Create a bridge that specifically adds feedback to PI3K (idx 0)
     builder = BridgeBuilder()
-    builder.add_reverse_mapping(flux_id="Biomass_Ecoli_core", species_name="PI3K", influence="negative", weight=1.0)
+    # Use a baseline closer to actual biomass flux (0.2) to ensure a strong signal
+    builder.add_reverse_mapping(flux_id="Biomass_Ecoli_core", species_name="PI3K", influence="negative", weight=1.0, baseline=0.5)
     bridge = builder.build()
     
     # Use deterministic simulation (no noise)

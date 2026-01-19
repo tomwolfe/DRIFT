@@ -3,6 +3,8 @@ import numpy as np
 import logging
 from typing import List, Dict, Any, Union, Optional, Callable
 
+import difflib
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -20,7 +22,7 @@ def michaelis_menten_mapping(x, km=0.5):
     return (x * (km + 1)) / (km + x)
 
 
-def fuzzy_match_reaction_id(query_id: str, model_reaction_ids: List[str]) -> Optional[str]:
+def fuzzy_match_reaction_id(query_id: str, model_reaction_ids: List[str], similarity_threshold: float = 0.7) -> Optional[str]:
     """
     Attempts to find a matching reaction ID in the model using common variations.
     Handles 'EX_' prefixes, case sensitivity, and double underscores.
@@ -71,10 +73,19 @@ def fuzzy_match_reaction_id(query_id: str, model_reaction_ids: List[str]) -> Opt
     # Deduplicate matches
     unique_matches = list(set(matches))
     
-    if len(unique_matches) == 1:
-        return unique_matches[0]
-    elif len(unique_matches) > 1:
-        logger.warning(f"Ambiguous fuzzy match for '{query_id}': multiple potential matches found {unique_matches}. "
+    # Similarity check for extra safety (Pareto 80/20 fix for matching risk)
+    final_matches = []
+    for match in unique_matches:
+        similarity = difflib.SequenceMatcher(None, query_id.lower(), match.lower()).ratio()
+        if similarity >= similarity_threshold:
+            final_matches.append(match)
+        else:
+            logger.debug(f"Fuzzy match '{match}' rejected for '{query_id}' due to low similarity ({similarity:.2f} < {similarity_threshold})")
+
+    if len(final_matches) == 1:
+        return final_matches[0]
+    elif len(final_matches) > 1:
+        logger.warning(f"Ambiguous fuzzy match for '{query_id}': multiple potential matches found {final_matches}. "
                        "Aborting match for safety. Please use explicit IDs.")
         return None
             
@@ -181,11 +192,11 @@ class MetabolicBridge:
                     all_resolved = False
                     continue
 
-                matched = fuzzy_match_reaction_id(rxn_id, model_rxn_ids)
-                if matched:
-                    logger.warning(f"!!! SCIENTIFIC RISK: Fuzzy matched mapping reaction '{rxn_id}' to '{matched}'. "
-                                 "This may lead to misattribution of metabolic effects. "
-                                 "Recommendation: Use explicit reaction IDs from the model.")
+                # Get similarity for logging
+                similarity = difflib.SequenceMatcher(None, rxn_id.lower(), matched.lower()).ratio()
+                logger.warning(f"!!! SCIENTIFIC RISK: Fuzzy matched mapping reaction '{rxn_id}' to '{matched}' (similarity: {similarity:.2f}). "
+                             "This may lead to misattribution of metabolic effects. "
+                             "Recommendation: Use explicit reaction IDs from the model.")
                     mapping["reaction_id"] = matched
                 else:
                     logger.warning(f"Could not resolve reaction ID '{rxn_id}' in model via exact or fuzzy matching.")
@@ -202,7 +213,8 @@ class MetabolicBridge:
 
                 matched = fuzzy_match_reaction_id(flux_id, model_rxn_ids)
                 if matched:
-                    logger.warning(f"Fuzzy matched reverse mapping flux '{flux_id}' to '{matched}'. "
+                    similarity = difflib.SequenceMatcher(None, flux_id.lower(), matched.lower()).ratio()
+                    logger.warning(f"Fuzzy matched reverse mapping flux '{flux_id}' to '{matched}' (similarity: {similarity:.2f}). "
                                  "Recommendation: Use explicit IDs.")
                     rev_map["flux_id"] = matched
                 else:
@@ -515,11 +527,12 @@ class DFBASolver:
             
             print("\n" + "!"*80)
             print("!!! WARNING: DFBASolver is running in HEADLESS MODE (No LP Solver found) !!!")
-            print("!!! Metabolic FBA will be PROXIED. Results will be qualitatively similar but NOT exact. !!!")
-            print("!!! To fix this, install a solver: pip install swiglpk")
+            print("!!! Metabolic FBA will be PROXIED. Results are QUALITATIVE ONLY.          !!!")
+            print("!!! DO NOT use these results for final pharmacological publication.        !!!")
+            print("!!! To fix this, install a solver: pip install swiglpk                     !!!")
             print("!"*80 + "\n")
             
-            logger.warning("DFBASolver initialized in HEADLESS mode (no solver found). FBA will be proxied.")
+            logger.warning("DFBASolver initialized in HEADLESS mode (no solver found). FBA will be PROXIED (QUALITATIVE ONLY).")
             self.model = None
             # Default proxy parameters for textbook-like behavior
             self.proxy_params = {
@@ -562,7 +575,9 @@ class DFBASolver:
             "objective_value": growth,
             "fluxes": fluxes,
             "status": "proxied",
-            "diagnostic": "FBA results approximated via algebraic proxy"
+            "diagnostic": "FBA results approximated via algebraic proxy (QUALITATIVE ONLY)",
+            "QUALITATIVE_NOTICE": "This result was generated in Headless Mode without a formal LP solver. "
+                                 "It is a linear approximation intended for qualitative testing only."
         }
 
     def get_fingerprint(self) -> str:
