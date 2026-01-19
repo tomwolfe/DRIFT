@@ -141,9 +141,6 @@ class Workbench:
         # Get basal growth first for normalization
         basal_growth = self.get_basal_growth(steps=steps)
 
-        if n_sims > 100:
-            print(f"[*] Running {n_sims} Monte Carlo simulations...")
-
         if n_jobs == -1:
             n_jobs = os.cpu_count() or 1
 
@@ -156,6 +153,9 @@ class Workbench:
             )
 
         all_histories = []
+        # Progress bar logic: Always show if n_sims > 1 to provide immediate feedback
+        use_tqdm = n_sims > 1
+
         if n_jobs > 1:
             try:
                 with ProcessPoolExecutor(
@@ -163,12 +163,13 @@ class Workbench:
                     initializer=_init_worker,
                     initargs=(self.model_name,),
                 ) as executor:
-                    if n_sims > 100:
+                    if use_tqdm:
                         all_histories = list(
                             tqdm(
                                 executor.map(_single_sim_wrapper, sim_args),
                                 total=len(sim_args),
                                 desc="Monte Carlo Simulations",
+                                leave=False,
                             )
                         )
                     else:
@@ -176,12 +177,12 @@ class Workbench:
                             executor.map(_single_sim_wrapper, sim_args)
                         )
             except Exception as e:
-                logger.error(f"Error in multiprocessing: {str(e)}")
+                logger.error(f"Error in multiprocessing: {str(e)}. Falling back to sequential.")
                 n_jobs = 1  # Fallback to sequential
 
         if n_jobs <= 1:
-            if n_sims > 100:
-                for args in tqdm(sim_args, desc="Sequential Simulations"):
+            if use_tqdm:
+                for args in tqdm(sim_args, desc="Sequential Simulations", leave=False):
                     all_histories.append(_single_sim_wrapper(args))
             else:
                 for args in sim_args:

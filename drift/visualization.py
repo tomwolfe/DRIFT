@@ -193,6 +193,17 @@ def create_dashboard(results):
         col=2,
     )
 
+    # Pareto: Add Basal Reference Line (100%) for visual context
+    fig.add_hline(
+        y=100.0,
+        line_dash="dot",
+        line_color="gray",
+        annotation_text="Basal (100%)",
+        annotation_position="bottom right",
+        row=2,
+        col=2,
+    )
+
     # Metadata Annotation for User Context
     inhibition = all_histories[0].get("inhibition", 0) * 100
     mean_vitality = np.mean(final_growths_pct)

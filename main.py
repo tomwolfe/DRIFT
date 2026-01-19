@@ -27,18 +27,24 @@ def main(config: SimulationConfig = None):
         config = SimulationConfig()
 
     print(f"[*] Configuration: Kd={config.drug_kd}, [Drug]={config.drug_concentration}")
-    print(f"[*] Target Model: Human Metabolic Proxy ({config.model_name})")
+    print(f"[*] Target Model: {config.model_name}")
 
     try:
+        # Pareto: Pre-flight check. Validate model loading BEFORE starting simulations.
+        # This saves users from waiting for MC setup if the model name is wrong.
+        print(f"[*] Pre-flight: Validating metabolic model '{config.model_name}'...")
+        from drift.metabolic import DFBASolver
+        _ = DFBASolver(model_name=config.model_name)
+        print("[+] Model validated.")
+
         # Initialize Workbench
-        # Note: load_model('textbook') will fetch/load a core metabolic model
         workbench = Workbench(
             drug_kd=config.drug_kd,
             drug_concentration=config.drug_concentration,
             model_name=config.model_name,
         )
 
-        print(f"[*] Running {config.mc_iterations} Monte Carlo simulations...")
+        print(f"[*] Running {config.mc_iterations} Monte Carlo simulations (Steps={config.sim_steps})...")
         results = workbench.run_monte_carlo(
             n_sims=config.mc_iterations, steps=config.sim_steps, n_jobs=config.n_jobs
         )
@@ -49,30 +55,38 @@ def main(config: SimulationConfig = None):
 
         # Calculate final mean growth to show in CLI
         final_growths = [h["growth"][-1] for h in all_histories]
-        avg_final_growth = sum(final_growths) / len(final_growths)
+        avg_final_growth = np.mean(final_growths)
         std_final_growth = np.std(final_growths)
         inhibition = all_histories[0]["inhibition"] * 100
 
         # Calculate relative growth (normalization)
         rel_growth = (avg_final_growth / basal_growth) * 100 if basal_growth > 0 else 0
 
+        # Phenotypic stability: Coefficient of Variation
+        cv = (std_final_growth / avg_final_growth) * 100 if avg_final_growth > 0 else 0
+
         print("\n--- Simulation Summary ---")
         print(f"Target Inhibition:      {inhibition:.2f}%")
         print(f"Basal Growth Rate:      {basal_growth:.4f} h⁻¹")
-        print(
-            f"Mean Treated Growth:    {avg_final_growth:.4f} h⁻¹ (±{std_final_growth:.4f})"
-        )
+        print(f"Mean Treated Growth:    {avg_final_growth:.4f} h⁻¹")
+        print(f"Phenotypic Uncertainty: ±{std_final_growth:.4f} ({cv:.1f}% CV)")
         print(f"Relative Vitality:      {rel_growth:.1f}%")
         print("--------------------------\n")
 
         print("[*] Generating interactive multi-scale dashboard...")
         fig = create_dashboard(results)
 
-        output_file = "drift_dashboard.html"
+        # Pareto: Use parameter-specific filename to allow side-by-side comparison
+        output_file = config.get_dashboard_filename()
         fig.write_html(output_file)
+
+        # Also update a 'latest' symlink or copy for convenience
+        latest_file = "drift_dashboard_latest.html"
+        fig.write_html(latest_file)
 
         print("[SUCCESS] Simulation complete.")
         print(f"Results saved to: {os.path.abspath(output_file)}")
+        print(f"Latest view updated: {os.path.abspath(latest_file)}")
 
         # Pareto Optimal: Auto-open the dashboard to reduce user friction
         print("[*] Opening dashboard in browser...")
