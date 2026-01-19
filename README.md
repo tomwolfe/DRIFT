@@ -27,10 +27,42 @@ pip install -r requirements.txt
 
 ## Usage
 
-Run the main simulation:
+### Basic Usage
+
+Run the main simulation with default parameters:
 
 ```bash
 python main.py
+```
+
+### Custom Parameters
+
+You can customize the simulation parameters using command-line arguments:
+
+```bash
+python main.py --drug-kd 0.75 --drug-conc 1.5 --sim-steps 150 --mc-iterations 50 --model-name textbook
+```
+
+### Configuration File
+
+Alternatively, you can use a JSON configuration file:
+
+```bash
+python main.py --config config.json
+```
+
+Example `config.json`:
+```json
+{
+    "drug_kd": 0.75,
+    "drug_concentration": 1.5,
+    "sim_steps": 150,
+    "mc_iterations": 50,
+    "dt": 0.1,
+    "noise_scale": 0.025,
+    "model_name": "textbook",
+    "n_jobs": 4
+}
 ```
 
 This will generate `drift_dashboard.html`, an interactive Plotly dashboard containing:
@@ -60,6 +92,11 @@ python -m unittest discover tests
 ```
 
 ### Recent Improvements (Pareto Optimized)
+- **Configuration System:** Added flexible configuration system allowing parameter customization via JSON files or command-line arguments.
+- **Input Validation:** Comprehensive input validation across all modules to prevent runtime errors.
+- **Error Handling:** Improved error handling and logging throughout the application.
+- **Documentation:** Enhanced docstrings and documentation for all modules.
+- **Test Coverage:** Expanded test suite covering edge cases and error conditions.
 - **Performance:** Worker processes in Monte Carlo simulations now reuse model instances and integrators, significantly reducing overhead.
 - **Robustness:** Enhanced error handling and logging for metabolic model loading and FBA optimization.
 - **Flexibility:** `MetabolicBridge` now supports arbitrary mappings between signaling nodes and metabolic reactions with configurable influence (positive/negative).

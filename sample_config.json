@@ -1,0 +1,10 @@
+{
+    "drug_kd": 0.75,
+    "drug_concentration": 1.5,
+    "sim_steps": 150,
+    "mc_iterations": 50,
+    "dt": 0.1,
+    "noise_scale": 0.025,
+    "model_name": "textbook",
+    "n_jobs": 4
+}
