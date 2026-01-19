@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "drift-sim"
+version = "0.1.0"
+authors = [
+  { name="Tom Wolfe" },
+]
+description = "A Multi-Scale Stochastic Framework for Predicting Drug-Induced Metabolic Drift"
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+dependencies = [
+    "cobra",
+    "numpy",
+    "scipy",
+    "numba",
+    "plotly",
+    "pandas",
+    "tqdm",
+]
+
+[project.scripts]
+drift-sim = "main:main"
+
+[tool.setuptools.packages.find]
+include = ["drift*"]
