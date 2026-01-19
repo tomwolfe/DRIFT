@@ -1,8 +1,8 @@
-import numpy as np
-
-
 class BindingEngine:
     """Calculates protein inhibition percentage based on Kd and [Drug]."""
+
+    kd: float
+    hill_coefficient: float
 
     def __init__(self, kd: float, hill_coefficient: float = 1.0):
         """
@@ -46,7 +46,7 @@ class BindingEngine:
         # Hill Equation: theta = [D]^n / ([D]^n + Kd^n)
         numerator = drug_concentration**self.hill_coefficient
         denominator = numerator + self.kd**self.hill_coefficient
-        return numerator / denominator
+        return float(numerator / denominator)
 
     def calculate_inhibition(self, drug_concentration: float) -> float:
         """
@@ -58,4 +58,4 @@ class BindingEngine:
         Returns:
             float: Inhibition percentage [0.0, 1.0]
         """
-        return self.calculate_occupancy(drug_concentration)
+        return float(self.calculate_occupancy(drug_concentration))

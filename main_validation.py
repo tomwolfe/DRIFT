@@ -7,7 +7,6 @@ confirming its biological accuracy and numerical stability.
 """
 
 import numpy as np
-import time
 from drift.workbench import Workbench
 from drift.binding import BindingEngine
 

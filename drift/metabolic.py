@@ -1,7 +1,7 @@
-import cobra
 from cobra.io import load_model
 import numpy as np
 import logging
+from typing import List, Dict, Any, Union, Optional
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 class MetabolicBridge:
     """Maps signaling protein concentrations to metabolic Vmax constraints."""
 
-    def __init__(self, mappings=None):
+    def __init__(self, mappings: Optional[List[Dict[str, Any]]] = None):
         """
         Initialize the MetabolicBridge.
 
@@ -22,7 +22,7 @@ class MetabolicBridge:
         """
         if mappings is None:
             # Default: mTOR (idx 2) increases glucose uptake capacity
-            self.mappings = [
+            self.mappings: List[Dict[str, Any]] = [
                 {
                     "protein_idx": 2,
                     "reaction_id": "EX_glc__D_e",
@@ -33,7 +33,7 @@ class MetabolicBridge:
         else:
             self.mappings = mappings
 
-    def get_constraints(self, signaling_state):
+    def get_constraints(self, signaling_state: Union[List[float], np.ndarray]) -> Dict[str, float]:
         """
         Translates signaling state to a dict of {reaction_id: lower_bound}.
 
@@ -51,25 +51,25 @@ class MetabolicBridge:
                 f"signaling_state must be a list, tuple, or array of length 3, got {signaling_state}"
             )
 
-        constraints = {}
+        constraints: Dict[str, float] = {}
 
         for map_config in self.mappings:
-            idx = map_config["protein_idx"]
-            rxn_id = map_config["reaction_id"]
-            base_vmax = map_config.get("base_vmax", 10.0)
-            influence = map_config.get("influence", "positive")
+            idx: int = map_config["protein_idx"]
+            rxn_id: str = map_config["reaction_id"]
+            base_vmax: float = map_config.get("base_vmax", 10.0)
+            influence: str = map_config.get("influence", "positive")
 
             if not (0 <= idx < 3):
                 logger.warning(f"Invalid protein index {idx}, skipping mapping")
                 continue
 
-            protein_level = signaling_state[idx]
+            protein_level = float(signaling_state[idx])
 
             if not (0 <= protein_level <= 1):
                 logger.warning(
                     f"Protein level {protein_level} out of range [0,1], clamping"
                 )
-                protein_level = max(0, min(1, protein_level))
+                protein_level = max(0.0, min(1.0, protein_level))
 
             if influence == "positive":
                 # Scaling factor: 0.1 basal to 1.0 max

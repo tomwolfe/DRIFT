@@ -65,7 +65,7 @@ def main():
     avg_final_growth = np.mean(final_growth_means)
     std_final_growth = np.std(final_growth_means)
 
-    print(f"\nMonte Carlo Summary:")
+    print("\nMonte Carlo Summary:")
     print(f"Basal Growth Rate: {basal_growth:.4f}")
     print(f"Mean Final Growth: {avg_final_growth:.4f}")
     print(f"Std of Final Growth: {std_final_growth:.4f}")

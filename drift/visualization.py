@@ -220,11 +220,11 @@ def create_dashboard(results):
     # Help Annotation for New Users
     fig.add_annotation(
         text=(
-            f"<b>How to Read This Dashboard</b><br>"
-            f"• <b>Top Left:</b> Temporal signaling response. Proteins should stabilize.<br>"
-            f"• <b>Top Right:</b> Sensitivity of growth to drug affinity (Kd).<br>"
-            f"• <b>Bottom Left:</b> Individual cell trajectories showing stochastic drift.<br>"
-            f"• <b>Bottom Right:</b> Statistical envelope of the population phenotype."
+            "<b>How to Read This Dashboard</b><br>"
+            "• <b>Top Left:</b> Temporal signaling response. Proteins should stabilize.<br>"
+            "• <b>Top Right:</b> Sensitivity of growth to drug affinity (Kd).<br>"
+            "• <b>Bottom Left:</b> Individual cell trajectories showing stochastic drift.<br>"
+            "• <b>Bottom Right:</b> Statistical envelope of the population phenotype."
         ),
         xref="paper",
         yref="paper",

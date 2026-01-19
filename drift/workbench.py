@@ -5,15 +5,15 @@ from .metabolic import MetabolicBridge, DFBASolver
 
 from concurrent.futures import ProcessPoolExecutor
 import os
-import cobra
 import logging
 from tqdm import tqdm
+from typing import Dict, Any
 
 # Configure logging
 logger = logging.getLogger(__name__)
 
 # Global cache for workers to avoid reloading model
-_worker_cache = {}
+_worker_cache: Dict[str, Any] = {}
 
 
 def _init_worker(model_name):
@@ -121,7 +121,7 @@ class Workbench:
         args = (self.binding.kd, self.drug_concentration, steps, self.model_name)
         return _single_sim_wrapper(args)
 
-    def run_monte_carlo(self, n_sims=30, steps=100, n_jobs=-1):
+    def run_monte_carlo(self, n_sims=30, steps=100, n_jobs=-1):  # noqa: C901
         """
         Runs multiple simulations with perturbed parameters in parallel.
 

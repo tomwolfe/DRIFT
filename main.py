@@ -56,14 +56,14 @@ def main(config: SimulationConfig = None):
         # Calculate relative growth (normalization)
         rel_growth = (avg_final_growth / basal_growth) * 100 if basal_growth > 0 else 0
 
-        print(f"\n--- Simulation Summary ---")
+        print("\n--- Simulation Summary ---")
         print(f"Target Inhibition:      {inhibition:.2f}%")
         print(f"Basal Growth Rate:      {basal_growth:.4f} h⁻¹")
         print(
             f"Mean Treated Growth:    {avg_final_growth:.4f} h⁻¹ (±{std_final_growth:.4f})"
         )
         print(f"Relative Vitality:      {rel_growth:.1f}%")
-        print(f"--------------------------\n")
+        print("--------------------------\n")
 
         print("[*] Generating interactive multi-scale dashboard...")
         fig = create_dashboard(results)
@@ -71,7 +71,7 @@ def main(config: SimulationConfig = None):
         output_file = "drift_dashboard.html"
         fig.write_html(output_file)
 
-        print(f"[SUCCESS] Simulation complete.")
+        print("[SUCCESS] Simulation complete.")
         print(f"Results saved to: {os.path.abspath(output_file)}")
 
         # Pareto Optimal: Auto-open the dashboard to reduce user friction
