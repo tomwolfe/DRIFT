@@ -17,7 +17,6 @@ _worker_cache = {}
 
 def _init_worker(model_name):
     """Initializes a worker process by loading the model once."""
-    global _worker_cache
     try:
         _worker_cache['solver'] = DFBASolver(model_name=model_name)
         _worker_cache['integrator'] = StochasticIntegrator(dt=0.1, noise_scale=0.03)
@@ -30,7 +29,6 @@ def _init_worker(model_name):
 def _single_sim_wrapper(args):
     """Helper to run a single simulation in a separate process."""
     drug_kd, drug_concentration, steps, model_name = args
-    global _worker_cache
 
     try:
         # Reuse cached components if they exist
