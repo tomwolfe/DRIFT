@@ -111,6 +111,10 @@ class StochasticIntegrator:
 
     def _custom_step(self, state, inhibition):
         """Step using a custom drift function provided in the topology."""
+        if self.topology.drift_fn is None:
+            # Fallback if drift_fn is None
+            return self._generic_step(state, inhibition)
+
         drift = self.topology.drift_fn(state, self.topology.parameters, inhibition)
         diffusion = np.random.normal(0, self.noise_scale, size=len(state)) * np.sqrt(self.dt)
         new_state = state + drift * self.dt + diffusion

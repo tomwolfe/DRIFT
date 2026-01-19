@@ -16,11 +16,13 @@ class Topology:
         parameters: Dict[str, float],
         drift_fn: Optional[Callable] = None,
         name: str = "custom_topology",
+        inhibited_species: Optional[str] = None,
     ):
         self.species = species
         self.parameters = parameters
         self.drift_fn = drift_fn
         self.name = name
+        self.inhibited_species = inhibited_species
 
     @classmethod
     def from_json(cls, json_path: str):
@@ -75,13 +77,12 @@ class Topology:
         name = model.getName() or model.getId() or "sbml_topology"
         logger.info(f"Imported SBML model: {name}")
         
-        topology = cls(
+        return cls(
             species=species,
             parameters=parameters,
-            name=name
+            name=name,
+            inhibited_species=inhibited_species
         )
-        topology.inhibited_species = inhibited_species
-        return topology
 
     def get_initial_state(self) -> np.ndarray:
         """Returns a default initial state (all 0.5 for normalized)."""
