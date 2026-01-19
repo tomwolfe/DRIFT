@@ -18,21 +18,24 @@ def test_auto_jit_custom_topology():
         drift_fn=custom_drift_fn,
         name="JitTest"
     )
-    
+
     assert topo.jitted_step_fn is None
-    
+
     # Initializing StochasticIntegrator should trigger auto-jit
     integrator = StochasticIntegrator(topology=topo)
-    
+
     assert topo.jitted_step_fn is not None
     assert type(topo.jitted_step_fn).__name__ == "CPUDispatcher"
-    
+
+    # Set a seed to make the test deterministic and avoid flakiness
+    integrator.set_seed(42)
+
     # Test a step
     state = np.array([0.8])
     new_state = integrator.step(state, inhibition=0.0)
-    
+
     assert new_state.shape == (1,)
-    assert new_state[0] < 0.8 # Should decay towards 0.5
+    assert new_state[0] < 0.8 # Should decay towards 0.5 (with deterministic seed)
 
 def test_no_jit_for_normal_fn():
     def normal_drift(state, params, inhibition=0.0, feedback=None):
