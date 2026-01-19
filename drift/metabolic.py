@@ -390,8 +390,8 @@ class DFBASolver:
         # Restore original solver
         try:
             self.model.solver = original_solver
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Could not restore original solver {original_solver}: {e}")
 
         # Check for discrepancies
         if len(results) > 1:
