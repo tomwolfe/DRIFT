@@ -63,7 +63,8 @@ class MetabolicBridge:
         self, 
         mappings: Optional[List[Dict[str, Any]]] = None, 
         reverse_mappings: Optional[List[Dict[str, Any]]] = None,
-        species_names: Optional[List[str]] = None
+        species_names: Optional[List[str]] = None,
+        strict_mapping: bool = False
     ):
         """
         Initialize the MetabolicBridge.
@@ -72,7 +73,9 @@ class MetabolicBridge:
             mappings: List of dicts specifying how signaling affects metabolism.
             reverse_mappings: List of dicts specifying how metabolism affects signaling.
             species_names: Optional list of signaling species names to resolve name-based mappings.
+            strict_mapping: If True, disables fuzzy matching and raises error on missing IDs.
         """
+        self.strict_mapping = strict_mapping
         if mappings is None:
             # Default: mTOR increases glucose uptake capacity
             self.mappings: List[Dict[str, Any]] = [
@@ -81,6 +84,8 @@ class MetabolicBridge:
                     "reaction_id": "EX_glc__D_e",
                     "influence": "positive",
                     "base_vmax": 10.0,
+                    "basal_scaling": 0.1,
+                    "max_scaling": 0.9
                 }
             ]
             # Provide default species names if they are missing to resolve "mTOR"
@@ -97,7 +102,7 @@ class MetabolicBridge:
     def validate_with_model(self, model: Any) -> bool:
         """
         Validates and repairs reaction IDs in mappings using the provided model.
-        Uses fuzzy matching to resolve common naming discrepancies.
+        Uses fuzzy matching to resolve common naming discrepancies unless strict_mapping is True.
         
         Returns:
             bool: True if all mappings were resolved, False otherwise.
@@ -112,9 +117,15 @@ class MetabolicBridge:
         for mapping in self.mappings:
             rxn_id = mapping.get("reaction_id")
             if rxn_id not in model_rxn_ids:
+                if self.strict_mapping:
+                    logger.error(f"STRICT MAPPING FAILURE: Reaction ID '{rxn_id}' not found in model.")
+                    all_resolved = False
+                    continue
+
                 matched = fuzzy_match_reaction_id(rxn_id, model_rxn_ids)
                 if matched:
-                    logger.info(f"Fuzzy matched mapping reaction '{rxn_id}' to '{matched}'")
+                    logger.warning(f"CRITICAL: Fuzzy matched mapping reaction '{rxn_id}' to '{matched}'. "
+                                 "This may lead to biological misassignment. Use strict_mapping=True to prevent this.")
                     mapping["reaction_id"] = matched
                 else:
                     logger.warning(f"Could not resolve reaction ID '{rxn_id}' in model.")
@@ -124,9 +135,14 @@ class MetabolicBridge:
         for rev_map in self.reverse_mappings:
             flux_id = rev_map.get("flux_id")
             if flux_id not in model_rxn_ids:
+                if self.strict_mapping:
+                    logger.error(f"STRICT MAPPING FAILURE: Reverse flux ID '{flux_id}' not found in model.")
+                    all_resolved = False
+                    continue
+
                 matched = fuzzy_match_reaction_id(flux_id, model_rxn_ids)
                 if matched:
-                    logger.info(f"Fuzzy matched reverse mapping flux '{flux_id}' to '{matched}'")
+                    logger.warning(f"CRITICAL: Fuzzy matched reverse mapping flux '{flux_id}' to '{matched}'.")
                     rev_map["flux_id"] = matched
                 else:
                     logger.warning(f"Could not resolve reverse mapping flux ID '{flux_id}' in model.")
@@ -296,12 +312,15 @@ class MetabolicBridge:
             if mapping_fn is not None:
                 # Use custom mapping function
                 scaling = mapping_fn(protein_level)
-            elif influence == "positive":
-                # Default linear scaling: 0.1 basal to 1.0 max
-                scaling = 0.1 + 0.9 * protein_level
             else:
-                # Default inhibitory effect
-                scaling = 1.0 - 0.9 * protein_level
+                # Configuration-based scaling (Pareto improvement: avoid hardcoded arbitrary constants)
+                basal = map_config.get("basal_scaling", 0.1)
+                max_s = map_config.get("max_scaling", 0.9)
+                
+                if influence == "positive":
+                    scaling = basal + max_s * protein_level
+                else:
+                    scaling = (basal + max_s) - max_s * protein_level
 
             # COBRA exchange reactions: Flux > -UB (uptake)
             # scale the magnitude of the negative lower bound.
@@ -317,6 +336,12 @@ class BridgeBuilder:
         self.mappings = []
         self.reverse_mappings = []
         self.species_names: Optional[List[str]] = None
+        self.strict_mapping = False
+
+    def set_strict_mapping(self, strict: bool = True) -> "BridgeBuilder":
+        """Enables or disables strict reaction ID mapping."""
+        self.strict_mapping = strict
+        return self
 
     def set_species_names(self, species_names: List[str]) -> "BridgeBuilder":
         """Sets the species names for the bridge."""
@@ -331,7 +356,9 @@ class BridgeBuilder:
         base_vmax: float = 10.0,
         mapping_fn: Optional[Callable[[float], float]] = None,
         protein_idx: Optional[int] = None,
-        protein_name: Optional[str] = None
+        protein_name: Optional[str] = None,
+        basal_scaling: float = 0.1,
+        max_scaling: float = 0.9
     ) -> "BridgeBuilder":
         """
         Adds a mapping from a signaling protein to a metabolic reaction.
@@ -343,7 +370,9 @@ class BridgeBuilder:
             "reaction_id": reaction_id,
             "influence": influence,
             "base_vmax": base_vmax,
-            "mapping_fn": mapping_fn
+            "mapping_fn": mapping_fn,
+            "basal_scaling": basal_scaling,
+            "max_scaling": max_scaling
         }
         
         # Resolve protein identifier
@@ -393,7 +422,8 @@ class BridgeBuilder:
         return MetabolicBridge(
             mappings=self.mappings, 
             reverse_mappings=self.reverse_mappings,
-            species_names=self.species_names
+            species_names=self.species_names,
+            strict_mapping=self.strict_mapping
         )
 
 

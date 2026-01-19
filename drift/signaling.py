@@ -91,12 +91,19 @@ def langevin_step(state, dt, params, noise_scale, feedback=None):
     # Update state
     new_state = state + drift * dt + b * dw + milstein_corr
 
-    # Physical constraints: proteins stay in [0, 1] range (normalized)
+    # Reflection principle: if the state exceeds boundaries, reflect it back.
+    # This is more robust than hard-clamping for preserving distributions.
     for i in range(len(new_state)):
+        # Reflect at 0
         if new_state[i] < 0:
-            new_state[i] = 0
+            new_state[i] = -new_state[i]
+        # Reflect at 1
         if new_state[i] > 1:
-            new_state[i] = 1
+            new_state[i] = 2.0 - new_state[i]
+        
+        # Final safety clamp in case of extreme steps
+        if new_state[i] < 0: new_state[i] = eps
+        if new_state[i] > 1: new_state[i] = 1.0 - eps
 
     return new_state
 
@@ -123,12 +130,15 @@ def create_langevin_integrator(drift_fn):
         # Update state
         new_state = state + drift * dt + b * dw + milstein_corr
 
-        # Physical constraints: proteins stay in [0, 1] range
+        # Reflection principle
         for i in range(len(new_state)):
             if new_state[i] < 0:
-                new_state[i] = 0
+                new_state[i] = -new_state[i]
             if new_state[i] > 1:
-                new_state[i] = 1
+                new_state[i] = 2.0 - new_state[i]
+            
+            if new_state[i] < 0: new_state[i] = eps
+            if new_state[i] > 1: new_state[i] = 1.0 - eps
 
         return new_state
         

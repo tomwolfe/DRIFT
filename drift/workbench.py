@@ -134,7 +134,8 @@ class Workbench:
         time_unit="hours",
         concentration_unit="uM",
         sub_steps=5,
-        refine_feedback=False
+        refine_feedback=False,
+        strict_mapping=False
     ):
         """
         Initialize the Workbench with specified parameters.
@@ -149,6 +150,7 @@ class Workbench:
             concentration_unit (str): Unit for concentration (default: "uM")
             sub_steps (int): Number of signaling sub-steps per metabolic step (default: 5)
             refine_feedback (bool): If True, uses a predictor-corrector step for metabolic feedback.
+            strict_mapping (bool): If True, enforces strict reaction ID mapping in the bridge.
         """
         if drug_kd <= 0:
             raise ValueError(f"drug_kd must be positive, got {drug_kd}")
@@ -164,7 +166,10 @@ class Workbench:
         from .topology import get_default_topology
         eff_topology = topology or get_default_topology()
         
-        self.metabolic_bridge = bridge or MetabolicBridge(species_names=eff_topology.species)
+        self.metabolic_bridge = bridge or MetabolicBridge(
+            species_names=eff_topology.species,
+            strict_mapping=strict_mapping
+        )
         if self.metabolic_bridge.species_names is None:
             self.metabolic_bridge.species_names = eff_topology.species
             
@@ -255,18 +260,18 @@ class Workbench:
         if steps <= 0:
             raise ValueError(f"steps must be positive, got {steps}")
 
-        # Memory Safety Enforcement
+        # Memory Safety Enforcement (Pareto: Prevent OOM by default for huge ensembles)
         total_data_points = n_sims * steps
-        if total_data_points > 1_000_000 and not (export_to or return_generator):
-            raise MemoryError(
-                f"Simulation ensemble is too large to collect in memory ({total_data_points} data points). "
-                "To prevent OutOfMemory errors, you MUST use return_generator=True or "
-                "provide an export_to='path.parquet' for incremental disk writing."
-            )
-        elif total_data_points > 100_000 and not (export_to or return_generator):
+        if total_data_points > 2_000_000 and not (export_to or return_generator):
             logger.warning(
-                f"Large simulation ensemble ({total_data_points} data points) may cause "
-                "memory pressure. Consider using export_to or return_generator."
+                f"Large ensemble ({total_data_points} pts) detected. "
+                "Automatically switching to generator mode to prevent OOM."
+            )
+            return_generator = True
+        elif total_data_points > 100_000 and not (export_to or return_generator):
+            logger.info(
+                f"Moderate simulation ensemble ({total_data_points} data points) "
+                "monitored for memory pressure."
             )
 
         print(f"[*] Establishing basal phenotypic baseline...")
