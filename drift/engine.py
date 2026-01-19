@@ -1,11 +1,25 @@
 import numpy as np
 import logging
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, TypedDict, Union
 from .binding import BindingEngine
 from .signaling import StochasticIntegrator
 from .metabolic import MetabolicBridge, DFBASolver
 
 logger = logging.getLogger(__name__)
+
+class SimulationResult(TypedDict):
+    """Schema for simulation history results."""
+    time: np.ndarray
+    signaling: np.ndarray
+    growth: np.ndarray
+    status: List[str]
+    cell_death: bool
+    death_step: Optional[int]
+    death_cause: Optional[str]
+    inhibition: float
+    drug_kd: float
+    params: Dict[str, float]
+    headless: bool
 
 class SimulationEngine:
     """
@@ -31,11 +45,15 @@ class SimulationEngine:
         drug_concentration: float,
         sub_steps: int = 5,
         refine_feedback: bool = False,
-        custom_params: Optional[Dict[str, float]] = None
-    ) -> Dict[str, Any]:
+        custom_params: Optional[Dict[str, float]] = None,
+        seed: Optional[int] = None
+    ) -> SimulationResult:
         """
         Runs the simulation loop.
         """
+        if seed is not None:
+            self.integrator.set_seed(seed)
+
         # Apply custom signaling parameters if provided
         if custom_params:
             for i, (p_name, p_val) in enumerate(self.integrator.topology.parameters.items()):
@@ -51,26 +69,30 @@ class SimulationEngine:
         state = self.integrator.topology.get_initial_state()
         feedback = np.ones(len(self.integrator.topology.species))  # Initial vector feedback
 
-        history = {
+        history: SimulationResult = {
             "time": np.arange(steps) * self.integrator.dt,
-            "signaling": [],
-            "growth": [],
+            "signaling": np.array([]), # Placeholder
+            "growth": np.array([]),    # Placeholder
             "status": [],
             "cell_death": False,
             "death_step": None,
+            "death_cause": None,
             "inhibition": inhibition,
             "drug_kd": self.binding.kd,
             "params": custom_params or {},
             "headless": self.solver.headless
         }
 
+        signaling_hist = []
+        growth_hist = []
+
         dt_small = self.integrator.dt / sub_steps
 
         for step in range(steps):
             if history["cell_death"]:
                 # Once dead, stay dead
-                history["signaling"].append(state.copy())
-                history["growth"].append(0.0)
+                signaling_hist.append(state.copy())
+                growth_hist.append(0.0)
                 history["status"].append("dead")
                 continue
 
@@ -123,10 +145,10 @@ class SimulationEngine:
             else:
                 feedback = self.bridge.get_feedback(fluxes)
 
-            history["signaling"].append(state.copy())
-            history["growth"].append(growth)
+            signaling_hist.append(state.copy())
+            growth_hist.append(growth)
             history["status"].append(status)
 
-        history["signaling"] = np.array(history["signaling"])
-        history["growth"] = np.array(history["growth"])
+        history["signaling"] = np.array(signaling_hist)
+        history["growth"] = np.array(growth_hist)
         return history

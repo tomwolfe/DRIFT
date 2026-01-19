@@ -22,7 +22,7 @@ def michaelis_menten_mapping(x, km=0.5):
     return (x * (km + 1)) / (km + x)
 
 
-def fuzzy_match_reaction_id(query_id: str, model_reaction_ids: List[str], similarity_threshold: float = 0.8) -> Optional[str]:
+def fuzzy_match_reaction_id(query_id: str, model_reaction_ids: List[str], similarity_threshold: float = 0.85) -> Optional[str]:
     """
     Attempts to find a matching reaction ID in the model using common variations.
     Handles 'EX_' prefixes, case sensitivity, and double underscores.
@@ -102,7 +102,8 @@ class MetabolicBridge:
         species_names: Optional[List[str]] = None,
         strict_mapping: bool = False,
         basal_growth_rate: float = 0.2,
-        flux_unit: str = "mmol/gDW/h"
+        flux_unit: str = "mmol/gDW/h",
+        probes: Optional[Dict[str, List[str]]] = None
     ):
         """
         Initialize the MetabolicBridge.
@@ -114,10 +115,15 @@ class MetabolicBridge:
             strict_mapping: If True, disables fuzzy matching and raises error on missing IDs.
             basal_growth_rate: Reference growth rate for feedback normalization (default: 0.2).
             flux_unit: Unit for metabolic fluxes (default: "mmol/gDW/h").
+            probes: Dict mapping probe names to lists of reaction IDs to sum (e.g., {'ATP_prod': ['ATPS4r', 'PGK']}).
         """
         self.strict_mapping = strict_mapping
         self.basal_growth_rate = basal_growth_rate
         self.flux_unit = flux_unit
+        self.probes = probes or {
+            "ATP_total": ["ATPS4r", "ATPMS", "ATPS", "ATPSv", "PGK", "PYK"],
+            "Glucose_uptake": ["EX_glc__D_e", "glc-D"]
+        }
         if mappings is None:
             # Default: mTOR increases glucose uptake capacity
             self.mappings: List[Dict[str, Any]] = [
@@ -215,9 +221,9 @@ class MetabolicBridge:
         # Validate reverse mappings
         for rev_map in self.reverse_mappings:
             flux_id = rev_map.get("flux_id")
-            if flux_id not in model_rxn_ids:
+            if flux_id not in model_rxn_ids and flux_id not in self.probes:
                 if self.strict_mapping:
-                    logger.error(f"STRICT MAPPING FAILURE: Reverse flux ID '{flux_id}' not found in model.")
+                    logger.error(f"STRICT MAPPING FAILURE: Reverse flux/probe ID '{flux_id}' not found.")
                     all_resolved = False
                     continue
 
@@ -246,24 +252,27 @@ class MetabolicBridge:
 
         feedback_vec = np.ones(len(self.species_names))
         
-        # Determine global/energy state
+        # Determine global/energy state and probes
         global_fb = self._get_global_feedback(fluxes)
-        energy_fb = self._get_energy_feedback(fluxes)
+        probe_values = self._calculate_probes(fluxes)
 
         # Apply specific reverse mappings
         for rev_map in self.reverse_mappings:
-            flux_id = rev_map.get("flux_id")
+            flux_id = rev_map.get("flux_id") # Can also be a probe name
             species_name = rev_map.get("species_name")
             influence = rev_map.get("influence", "positive")
             weight = rev_map.get("weight", 1.0)
             mapping_type = rev_map.get("mapping_type", "linear")
             mapping_params = rev_map.get("mapping_params", {})
 
-            if flux_id in fluxes and species_name in self.species_names:
+            # Value can come from direct flux or probe
+            val = fluxes.get(flux_id) if flux_id in fluxes else probe_values.get(flux_id)
+
+            if val is not None and species_name in self.species_names:
                 idx = self.species_names.index(species_name)
                 # Normalize flux relative to a baseline or max expected (default 10.0)
                 baseline = rev_map.get("baseline", 10.0)
-                flux_val = np.clip(fluxes[flux_id] / baseline, 0.0, 1.0) 
+                flux_val = np.clip(val / baseline, 0.0, 1.0) 
                 
                 # Apply mapping function
                 if mapping_type == "sigmoidal":
@@ -290,6 +299,16 @@ class MetabolicBridge:
 
         return feedback_vec
 
+    def _calculate_probes(self, fluxes: Dict[str, float]) -> Dict[str, float]:
+        """Calculates aggregated flux values from defined probes."""
+        probe_vals = {}
+        for probe_name, rxn_ids in self.probes.items():
+            total = 0.0
+            for rid in rxn_ids:
+                total += abs(fluxes.get(rid, 0.0))
+            probe_vals[probe_name] = total
+        return probe_vals
+
     def _get_global_feedback(self, fluxes: Dict[str, float]) -> float:
         """Calculates a global feedback signal based on growth rate (internal helper)."""
         if not fluxes:
@@ -315,29 +334,6 @@ class MetabolicBridge:
 
         feedback = float(np.clip(growth_flux / self.basal_growth_rate, 0.0, 1.0))
         return feedback
-
-    def _get_energy_feedback(self, fluxes: Dict[str, float]) -> float:
-        """Calculates an energy-sensing feedback signal (ATP/ADP ratio proxy)."""
-        if not fluxes:
-            return 1.0
-            
-        # Proxy: Total ATP production flux
-        # ATPS4r (textbook), ATPMS (Recon1), etc.
-        atp_keys = ["ATPS4r", "ATPMS", "ATPS", "ATPSv"]
-        atp_flux = 0.0
-        for key in atp_keys:
-            if key in fluxes:
-                atp_flux = fluxes[key]
-                break
-        
-        # If not found, look for other ATP-producing reactions
-        if atp_flux == 0.0:
-            # Sum of all positive fluxes through reactions containing 'ATP' and 'synthase' or 'synth'
-            atp_flux = sum(f for k, f in fluxes.items() if ("ATP" in k.upper() and ("SYNTH" in k.upper() or "S4R" in k.upper())) and f > 0)
-            
-        # Normalize: textbook ATPS4r is around 2-10 under good growth
-        energy_state = float(np.clip(atp_flux / 5.0, 0.0, 1.0))
-        return energy_state
 
     def get_constraints(self, signaling_state: Union[List[float], np.ndarray]) -> Dict[str, float]:
         """
@@ -567,34 +563,49 @@ class DFBASolver:
     def _solve_proxy(self, constraints):
         """
         Algebraic proxy for FBA when no solver is available.
-        Mimics growth based on the most limiting uptake constraint.
+        Mimics growth based on the most limiting uptake constraint and stoichiometric realism.
         """
         # In FBA, growth is limited by the substrate uptake (e.g., Glucose)
         # uptake_flux = -lower_bound (since lower bound is negative for uptake)
-        uptake_fluxes = [-lb for lb in constraints.values() if lb < 0]
+        uptake_fluxes = {k: -lb for k, lb in constraints.items() if lb < 0}
         
         if not uptake_fluxes:
             growth = self.proxy_params["base_growth"]
         else:
-            # Growth is limited by the most restrictive uptake
-            # For textbook model, Glucose uptake of 10 gives growth ~0.2
-            min_uptake = min(uptake_fluxes)
+            # Pareto: More realistic proxy using Michaelis-Menten saturation for growth
+            # and considering multiple potential substrates if they were mapped.
+            # growth = sum(yield_i * [S_i]/(Km_i + [S_i]))
+            effective_uptakes = []
+            for rxn_id, val in uptake_fluxes.items():
+                # Apply a simple saturation curve to mimic enzyme kinetics
+                km_proxy = 5.0 
+                saturated_val = val / (km_proxy + val) * (km_proxy + 10.0) # normalized to 10
+                effective_uptakes.append(saturated_val)
+            
+            # Growth is limited by the most restrictive (minimum) substrate
+            min_uptake = min(effective_uptakes)
             growth = min_uptake * self.proxy_params["yield_coefficient"]
 
         # Simulate some basic fluxes for feedback
         fluxes = {k: -lb for k, lb in constraints.items()}
         fluxes["growth"] = growth
         fluxes["biomass"] = growth
-        # Energy proxy: proportional to growth
-        fluxes["ATPS4r"] = growth * 25.0 
+        
+        # Energy proxy: proportional to growth but with slight non-linearity
+        # Mimics the ATP maintenance and varying yield
+        fluxes["ATPS4r"] = growth * 25.0 * (1.0 + 0.1 * np.sin(growth * 10)) 
+        
+        # Add basic metabolite identifiers often used in feedback
+        fluxes["EX_glc__D_e"] = uptake_fluxes.get("EX_glc__D_e", 10.0)
+        fluxes["EX_o2_e"] = 20.0 # Assume aerobic by default
 
         return {
             "objective_value": growth,
             "fluxes": fluxes,
             "status": "proxied",
-            "diagnostic": "FBA results approximated via algebraic proxy (QUALITATIVE ONLY)",
-            "QUALITATIVE_NOTICE": "This result was generated in Headless Mode without a formal LP solver. "
-                                 "It is a linear approximation intended for qualitative testing only."
+            "diagnostic": "FBA results approximated via Solver-Aware Proxy (QUALITATIVE ONLY)",
+            "QUALITATIVE_NOTICE": "This result was generated in Headless Mode using an enhanced algebraic proxy. "
+                                 "While it mimics stoichiometric saturation, it is still a QUALITATIVE approximation."
         }
 
     def get_fingerprint(self) -> str:

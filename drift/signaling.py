@@ -9,6 +9,12 @@ logger = logging.getLogger(__name__)
 
 
 @njit
+def seed_numba(seed):
+    """Sets the seed for Numba's random number generator."""
+    np.random.seed(seed)
+
+
+@njit
 def langevin_step_generic(state, dt, params, noise_scale, drift_fn, feedback=None):
     """
     One step of SDE integration using the Milstein scheme for better stability.
@@ -122,6 +128,12 @@ class StochasticIntegrator:
 
         # Stability check
         self._check_stability()
+
+    def set_seed(self, seed: int):
+        """Sets the seed for the integrator (including Numba jitted functions)."""
+        np.random.seed(seed)
+        seed_numba(seed)
+        logger.debug(f"Integrator seed set to {seed}")
 
     def _check_stability(self):
         """

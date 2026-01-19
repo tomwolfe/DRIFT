@@ -3,15 +3,16 @@ import pandas as pd
 from .binding import BindingEngine
 from .signaling import StochasticIntegrator
 from .metabolic import MetabolicBridge, DFBASolver
-from .engine import SimulationEngine
+from .engine import SimulationEngine, SimulationResult
 
 from concurrent.futures import ProcessPoolExecutor
 import multiprocessing as mp
 import os
 import logging
 import json
+import random
 from tqdm import tqdm
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional, Union, Generator
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -101,9 +102,9 @@ def _init_worker(model_or_name, topology=None, bridge=None, model_fingerprint=No
         raise
 
 
-def _single_sim_wrapper(args):
+def _single_sim_wrapper(args) -> SimulationResult:
     """Helper to run a single simulation in a separate process."""
-    drug_kd, drug_concentration, steps, model_or_name, topology, bridge, custom_params, sub_steps, refine_feedback, model_fingerprint = args
+    drug_kd, drug_concentration, steps, model_or_name, topology, bridge, custom_params, sub_steps, refine_feedback, model_fingerprint, seed = args
 
     try:
         from .topology import get_default_topology
@@ -151,7 +152,8 @@ def _single_sim_wrapper(args):
             drug_concentration=drug_concentration,
             sub_steps=sub_steps,
             refine_feedback=refine_feedback,
-            custom_params=custom_params
+            custom_params=custom_params,
+            seed=seed
         )
     except Exception as e:
         logger.error(f"Error in single simulation: {str(e)}")
@@ -173,7 +175,8 @@ class Workbench:
         flux_unit="mmol/gDW/h",
         sub_steps=5,
         refine_feedback=False,
-        strict_mapping=False
+        strict_mapping=False,
+        random_state: Optional[int] = None
     ):
         """
         Initialize the Workbench with specified parameters.
@@ -190,6 +193,7 @@ class Workbench:
             sub_steps (int): Number of signaling sub-steps per metabolic step (default: 5)
             refine_feedback (bool): If True, uses a predictor-corrector step for metabolic feedback.
             strict_mapping (bool): If True, enforces strict reaction ID mapping in the bridge.
+            random_state (int, optional): Seed for reproducibility.
         """
         if drug_kd <= 0:
             raise ValueError(f"drug_kd must be positive, got {drug_kd}")
@@ -197,6 +201,11 @@ class Workbench:
             raise ValueError(
                 f"drug_concentration must be non-negative, got {drug_concentration}"
             )
+
+        self.random_state = random_state
+        if random_state is not None:
+            np.random.seed(random_state)
+            random.seed(random_state)
 
         self.binding = BindingEngine(kd=drug_kd)
         self.topology = topology
@@ -242,28 +251,31 @@ class Workbench:
         self.sub_steps = sub_steps
         self.refine_feedback = refine_feedback
 
-    def get_basal_growth(self, steps=100):
+    def get_basal_growth(self, steps=100) -> float:
         """Calculates growth rate without any drug inhibition."""
         fingerprint = self.solver.get_fingerprint()
-        args = (self.binding.kd, 0.0, steps, self.solver.model or self.model_name, self.topology, self.metabolic_bridge, None, self.sub_steps, self.refine_feedback, fingerprint)
+        seed = self.random_state if self.random_state is not None else None
+        args = (self.binding.kd, 0.0, steps, self.solver.model or self.model_name, self.topology, self.metabolic_bridge, None, self.sub_steps, self.refine_feedback, fingerprint, seed)
         history = _single_sim_wrapper(args)
         return np.mean(history["growth"])
 
-    def run_simulation(self, steps=100):
+    def run_simulation(self, steps=100, seed: Optional[int] = None) -> SimulationResult:
         """
         Runs a single temporal simulation.
 
         Args:
             steps (int): Number of simulation steps to run
+            seed (int, optional): Seed for this specific simulation.
 
         Returns:
-            dict: History of the simulation with time, signaling, growth, and inhibition data
+            SimulationResult: History of the simulation
         """
         if steps <= 0:
             raise ValueError(f"steps must be positive, got {steps}")
 
+        eff_seed = seed if seed is not None else self.random_state
         fingerprint = self.solver.get_fingerprint()
-        args = (self.binding.kd, self.drug_concentration, steps, self.solver.model or self.model_name, self.topology, self.metabolic_bridge, None, self.sub_steps, self.refine_feedback, fingerprint)
+        args = (self.binding.kd, self.drug_concentration, steps, self.solver.model or self.model_name, self.topology, self.metabolic_bridge, None, self.sub_steps, self.refine_feedback, fingerprint, eff_seed)
         return _single_sim_wrapper(args)
 
     def _history_to_rows(self, hist, sim_idx):
@@ -295,7 +307,7 @@ class Workbench:
             rows.append(row)
         return rows
 
-    def run_monte_carlo(self, n_sims=30, steps=100, n_jobs=-1, perturb_params: Optional[List[str]] = None, export_to: Optional[str] = None, return_generator: bool = False):  # noqa: C901
+    def run_monte_carlo(self, n_sims=30, steps=100, n_jobs=-1, perturb_params: Optional[List[str]] = None, export_to: Optional[str] = None, return_generator: bool = False) -> Union[Dict[str, Any], Generator[SimulationResult, None, None]]:  # noqa: C901
         """
         Runs multiple simulations with perturbed parameters in parallel.
 
@@ -344,7 +356,15 @@ class Workbench:
         fingerprint = self.solver.get_fingerprint()
         model_or_name = self.solver.model or self.model_name
 
-        for _ in range(n_sims):
+        # Master seeding logic
+        master_seed = self.random_state if self.random_state is not None else random.randint(0, 2**31)
+        sim_seeds = [master_seed + i for i in range(n_sims)]
+
+        for i in range(n_sims):
+            # Ensure parameter perturbation is also deterministic if random_state is set
+            if self.random_state is not None:
+                np.random.seed(sim_seeds[i])
+
             perturbed_kd = base_kd * np.random.uniform(0.8, 1.2)
             custom_params = {}
             if perturb_params:
@@ -353,7 +373,7 @@ class Workbench:
                         custom_params[p_name] = eff_topology.parameters[p_name] * np.random.uniform(0.8, 1.2)
 
             sim_args.append(
-                (perturbed_kd, self.drug_concentration, steps, model_or_name, self.topology, self.metabolic_bridge, custom_params, self.sub_steps, self.refine_feedback, fingerprint)
+                (perturbed_kd, self.drug_concentration, steps, model_or_name, self.topology, self.metabolic_bridge, custom_params, self.sub_steps, self.refine_feedback, fingerprint, sim_seeds[i])
             )
 
         print(f"[*] Starting Monte Carlo Ensemble (N={n_sims}, Workers={n_jobs})...")
