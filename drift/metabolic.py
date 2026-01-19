@@ -38,20 +38,20 @@ class MetabolicBridge:
         Translates signaling state to a dict of {reaction_id: lower_bound}.
 
         Args:
-            signaling_state: [PI3K, AKT, mTOR] - normalized protein concentrations
+            signaling_state: Normalized protein concentrations
 
         Returns:
             dict: Dictionary mapping reaction IDs to constraint values
         """
         if (
             not isinstance(signaling_state, (list, tuple, np.ndarray))
-            or len(signaling_state) != 3
         ):
             raise ValueError(
-                f"signaling_state must be a list, tuple, or array of length 3, got {signaling_state}"
+                f"signaling_state must be a list, tuple, or array, got {type(signaling_state)}"
             )
 
         constraints: Dict[str, float] = {}
+        state_len = len(signaling_state)
 
         for map_config in self.mappings:
             idx: int = map_config["protein_idx"]
@@ -59,8 +59,8 @@ class MetabolicBridge:
             base_vmax: float = map_config.get("base_vmax", 10.0)
             influence: str = map_config.get("influence", "positive")
 
-            if not (0 <= idx < 3):
-                logger.warning(f"Invalid protein index {idx}, skipping mapping")
+            if not (0 <= idx < state_len):
+                logger.warning(f"Invalid protein index {idx} for state of length {state_len}, skipping mapping")
                 continue
 
             protein_level = float(signaling_state[idx])

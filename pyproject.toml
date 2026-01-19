@@ -11,15 +11,21 @@ authors = [
 description = "A Multi-Scale Stochastic Framework for Predicting Drug-Induced Metabolic Drift"
 readme = "README.md"
 requires-python = ">=3.10"
+license = {text = "MIT"}
+maintainers = [
+  { name="Tom Wolfe", email="tom.wolfe@example.com" }
+]
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Topic :: Scientific/Engineering :: Bio-Informatics",
     "Intended Audience :: Science/Research",
     "Development Status :: 3 - Alpha",
 ]
-keywords = ["systems-biology", "metabolic-modeling", "fba", "stochastic-differential-equations", "drug-response"]
+keywords = ["systems-biology", "metabolic-modeling", "fba", "stochastic-differential-equations", "drug-response", "sbml"]
 dependencies = [
     "cobra",
     "numpy",
@@ -28,20 +34,27 @@ dependencies = [
     "plotly",
     "pandas",
     "tqdm",
+    "matplotlib",
 ]
 
 [project.urls]
 "Homepage" = "https://github.com/tomwolfe/DRIFT"
 "Bug Tracker" = "https://github.com/tomwolfe/DRIFT/issues"
 "Documentation" = "https://github.com/tomwolfe/DRIFT#documentation"
+"Repository" = "https://github.com/tomwolfe/DRIFT.git"
 
 [project.optional-dependencies]
+sbml = [
+    "python-libsbml>=5.19.0",
+]
 dev = [
     "pytest>=6.0",
     "pytest-cov>=2.0",
     "flake8>=3.8",
     "black>=21.0",
     "mypy>=0.800",
+    "ipykernel",
+    "jupyter",
 ]
 docs = [
     "sphinx>=4.0",

@@ -16,11 +16,11 @@ logger = logging.getLogger(__name__)
 _worker_cache: Dict[str, Any] = {}
 
 
-def _init_worker(model_name):
+def _init_worker(model_name, topology=None):
     """Initializes a worker process by loading the model once."""
     try:
         _worker_cache["solver"] = DFBASolver(model_name=model_name)
-        _worker_cache["integrator"] = StochasticIntegrator(dt=0.1, noise_scale=0.03)
+        _worker_cache["integrator"] = StochasticIntegrator(dt=0.1, noise_scale=0.03, topology=topology)
         _worker_cache["bridge"] = MetabolicBridge()
         logger.info(f"Worker initialized with model: {model_name}")
     except Exception as e:
@@ -30,7 +30,7 @@ def _init_worker(model_name):
 
 def _single_sim_wrapper(args):
     """Helper to run a single simulation in a separate process."""
-    drug_kd, drug_concentration, steps, model_name = args
+    drug_kd, drug_concentration, steps, model_name, topology = args
 
     try:
         # Reuse cached components if they exist
@@ -42,12 +42,14 @@ def _single_sim_wrapper(args):
         else:
             # Fallback for non-pool execution
             binding = BindingEngine(kd=drug_kd)
-            integrator = StochasticIntegrator(dt=0.1, noise_scale=0.03)
+            integrator = StochasticIntegrator(dt=0.1, noise_scale=0.03, topology=topology)
             bridge = MetabolicBridge()
             solver = DFBASolver(model_name=model_name)
 
         inhibition = binding.calculate_inhibition(drug_concentration)
-        state = np.array([0.8, 0.8, 0.8])
+        
+        # Initial state from topology
+        state = integrator.topology.get_initial_state()
 
         history = {
             "time": np.arange(steps) * integrator.dt,
@@ -76,7 +78,7 @@ def _single_sim_wrapper(args):
 class Workbench:
     """Multi-Scale Stochastic Research Workbench."""
 
-    def __init__(self, drug_kd=1.0, drug_concentration=2.0, model_name="textbook"):
+    def __init__(self, drug_kd=1.0, drug_concentration=2.0, model_name="textbook", topology=None):
         """
         Initialize the Workbench with specified parameters.
 
@@ -84,6 +86,7 @@ class Workbench:
             drug_kd (float): Dissociation constant of the drug
             drug_concentration (float): Concentration of the drug in the system
             model_name (str): Name of the metabolic model to use
+            topology (Topology, optional): Signaling network topology
         """
         if drug_kd <= 0:
             raise ValueError(f"drug_kd must be positive, got {drug_kd}")
@@ -93,7 +96,8 @@ class Workbench:
             )
 
         self.binding = BindingEngine(kd=drug_kd)
-        self.signaling = StochasticIntegrator(dt=0.1, noise_scale=0.03)
+        self.topology = topology
+        self.signaling = StochasticIntegrator(dt=0.1, noise_scale=0.03, topology=topology)
         self.metabolic_bridge = MetabolicBridge()
         self.solver = DFBASolver(model_name=model_name)
         self.drug_concentration = drug_concentration
@@ -101,7 +105,7 @@ class Workbench:
 
     def get_basal_growth(self, steps=100):
         """Calculates growth rate without any drug inhibition."""
-        args = (self.binding.kd, 0.0, steps, self.model_name)
+        args = (self.binding.kd, 0.0, steps, self.model_name, self.topology)
         history = _single_sim_wrapper(args)
         return np.mean(history["growth"])
 
@@ -118,7 +122,7 @@ class Workbench:
         if steps <= 0:
             raise ValueError(f"steps must be positive, got {steps}")
 
-        args = (self.binding.kd, self.drug_concentration, steps, self.model_name)
+        args = (self.binding.kd, self.drug_concentration, steps, self.model_name, self.topology)
         return _single_sim_wrapper(args)
 
     def run_monte_carlo(self, n_sims=30, steps=100, n_jobs=-1):  # noqa: C901
@@ -149,7 +153,7 @@ class Workbench:
         for _ in range(n_sims):
             perturbed_kd = base_kd * np.random.uniform(0.8, 1.2)
             sim_args.append(
-                (perturbed_kd, self.drug_concentration, steps, self.model_name)
+                (perturbed_kd, self.drug_concentration, steps, self.model_name, self.topology)
             )
 
         all_histories = []
@@ -161,7 +165,7 @@ class Workbench:
                 with ProcessPoolExecutor(
                     max_workers=n_jobs,
                     initializer=_init_worker,
-                    initargs=(self.model_name,),
+                    initargs=(self.model_name, self.topology),
                 ) as executor:
                     if use_tqdm:
                         all_histories = list(

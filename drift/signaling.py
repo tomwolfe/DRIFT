@@ -2,6 +2,9 @@ import numpy as np
 from numba import njit
 
 
+from .topology import Topology, get_default_topology
+
+
 @njit
 def langevin_step(state, dt, params, noise_scale):
     """
@@ -39,7 +42,7 @@ def langevin_step(state, dt, params, noise_scale):
     new_state = state + drift + diffusion
 
     # Physical constraints: proteins stay in [0, 1] range (normalized)
-    for i in range(3):
+    for i in range(len(state)):
         if new_state[i] < 0:
             new_state[i] = 0
         if new_state[i] > 1:
@@ -51,13 +54,14 @@ def langevin_step(state, dt, params, noise_scale):
 class StochasticIntegrator:
     """Integrator for stochastic differential equations in signaling pathways."""
 
-    def __init__(self, dt=0.1, noise_scale=0.02):
+    def __init__(self, dt=0.1, noise_scale=0.02, topology=None):
         """
         Initialize the StochasticIntegrator.
 
         Args:
             dt (float): Time step for integration
             noise_scale (float): Scale of the noise term
+            topology (Topology, optional): Signaling network topology
 
         Raises:
             ValueError: If dt or noise_scale are invalid
@@ -69,35 +73,47 @@ class StochasticIntegrator:
 
         self.dt = dt
         self.noise_scale = noise_scale
-        # Default kinetic parameters
-        self.base_params = np.array(
-            [
-                0.1,  # k_pi3k_base
-                0.1,  # k_pi3k_deg
-                0.5,  # k_akt_act
-                0.1,  # k_akt_deact
-                0.5,  # k_mtor_act
-                0.1,  # k_mtor_deact
-            ]
-        )
+        self.topology = topology or get_default_topology()
+        
+        # Default kinetic parameters for PI3K/AKT/mTOR
+        self.base_params = np.array(list(self.topology.parameters.values()))
 
     def step(self, state, inhibition):
         """
         Perform one integration step.
 
         Args:
-            state (np.ndarray): Current state [PI3K, AKT, mTOR]
+            state (np.ndarray): Current state
             inhibition (float): Inhibition factor from binding
 
         Returns:
             np.ndarray: Updated state after one step
         """
-        if not isinstance(state, np.ndarray) or state.shape != (3,):
+        if not isinstance(state, np.ndarray) or state.shape != (len(self.topology.species),):
             raise ValueError(
-                f"state must be a numpy array of shape (3,), got {type(state)} with shape {getattr(state, 'shape', 'N/A')}"
+                f"state must be a numpy array of shape ({len(self.topology.species)},), got {type(state)} with shape {getattr(state, 'shape', 'N/A')}"
             )
         if not (0 <= inhibition <= 1):
             raise ValueError(f"inhibition must be between 0 and 1, got {inhibition}")
 
-        params = np.concatenate((self.base_params, [inhibition]))
-        return langevin_step(state, self.dt, params, self.noise_scale)
+        # If it's the default topology, use the fast jitted step
+        if self.topology.name == "PI3K_AKT_mTOR":
+            params = np.concatenate((self.base_params, [inhibition]))
+            return langevin_step(state, self.dt, params, self.noise_scale)
+        
+        # Otherwise use a generic step (can be extended for custom ODEs)
+        return self._generic_step(state, inhibition)
+
+    def _generic_step(self, state, inhibition):
+        """Generic Euler-Maruyama step for custom topologies."""
+        # Simple placeholder for custom drift if provided, otherwise assume identity
+        if hasattr(self.topology, 'drift_fn') and self.topology.drift_fn:
+            drift = self.topology.drift_fn(state, self.topology.parameters, inhibition)
+        else:
+            # Fallback: very simple decay-to-zero drift if no function provided
+            drift = -0.1 * state
+            
+        diffusion = np.random.normal(0, self.noise_scale, size=len(state)) * np.sqrt(self.dt)
+        new_state = state + drift * self.dt + diffusion
+        
+        return np.clip(new_state, 0, 1)

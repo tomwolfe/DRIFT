@@ -96,12 +96,12 @@ class TestMetabolic(unittest.TestCase):
         self.assertEqual(constraints["EX_glc__D_e"], -1.0)
 
     def test_bridge_invalid_signaling_state(self):
-        """Test that invalid signaling states raise errors."""
+        """Test that invalid signaling states are handled."""
         bridge = MetabolicBridge()
-        with self.assertRaises(ValueError):
-            bridge.get_constraints([0.5, 0.5])  # Wrong length
-        with self.assertRaises(ValueError):
-            bridge.get_constraints([0.5, 0.5, 0.5, 0.5])  # Wrong length
+        # Should NOT raise ValueError for length 2 anymore, just warns
+        constraints = bridge.get_constraints([0.5, 0.5])
+        self.assertEqual(len(constraints), 0)
+        
         with self.assertRaises(ValueError):
             bridge.get_constraints("invalid")  # Wrong type
 
