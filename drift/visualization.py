@@ -17,6 +17,7 @@ def plot_death_diagnostics(history):
     
     # Extract signaling state at death
     signaling_at_death = history["signaling"][death_step]
+    species_names = history.get("species_names", ["PI3K", "AKT", "mTOR"])
     
     # We want to show which protein-reaction mapping was the 'killer'
     # This requires reaching into the solver's last known state or re-calculating
@@ -26,7 +27,7 @@ def plot_death_diagnostics(history):
     
     # Plot signaling levels at time of death
     fig.add_trace(go.Bar(
-        x=["PI3K", "AKT", "mTOR"], # Default species
+        x=species_names,
         y=signaling_at_death,
         marker_color='red',
         name='Protein Level'
@@ -151,12 +152,12 @@ def create_dashboard(results):
     )
 
     # Trace Colors
-    colors = {
-        "PI3K": "#1f77b4",
-        "AKT": "#2ca02c",
-        "mTOR": "#d62728",
-        "Growth": "#ff7f0e",
-    }
+    # Standard color palette for signaling species
+    standard_colors = ["#1f77b4", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
+    
+    species_names = all_histories[0].get("species_names", ["PI3K", "AKT", "mTOR"])
+    colors = {name: standard_colors[i % len(standard_colors)] for i, name in enumerate(species_names)}
+    colors["Growth"] = "#ff7f0e"
 
     # 2. Sampled Trajectories (Top Left & Bottom Left)
     # Pareto: Only plot a limited number of traces to avoid Plotly lag
@@ -171,7 +172,8 @@ def create_dashboard(results):
         show_leg = bool(i == sample_indices[0])
 
         # Signaling (Top Left)
-        for species_idx, (species_name, color) in enumerate(zip(["PI3K", "AKT", "mTOR"], [colors["PI3K"], colors["AKT"], colors["mTOR"]])):
+        for species_idx, species_name in enumerate(species_names):
+            color = colors.get(species_name, "#7f7f7f")
             y_data = hist["signaling"][:, species_idx]
             if decimate:
                 y_data = y_data[indices]

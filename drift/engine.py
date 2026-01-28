@@ -17,9 +17,10 @@ class SimulationResult(TypedDict):
     death_step: Optional[int]
     death_cause: Optional[str]
     inhibition: float
-    drug_kd: float
+    drug_kd: Union[float, Dict[str, float]]
     params: Dict[str, float]
     headless: bool
+    species_names: List[str]
 
 class SimulationEngine:
     """
@@ -62,12 +63,26 @@ class SimulationEngine:
 
         inhibition = self.binding.calculate_inhibition(drug_concentration)
         
+        # Calculate a representative inhibition for logging/history
+        if isinstance(inhibition, dict):
+            # Use the mean inhibition as the single value for history if needed, 
+            # or just the first one. For history["inhibition"], we'll take the max.
+            primary_inhibition = max(inhibition.values()) if inhibition else 0.0
+        else:
+            primary_inhibition = inhibition
+
         if self.solver.headless:
             logger.warning("SimulationEngine: Running in HEADLESS mode. Metabolism is PROXIED (QUALITATIVE RESULTS ONLY).")
 
         # Initial state from topology
         state = self.integrator.topology.get_initial_state()
         feedback = np.ones(len(self.integrator.topology.species))  # Initial vector feedback
+
+        # Calculate drug_kd for history: if single target, use float; if multi, use dict.
+        if len(self.binding.targets) == 1 and "default" in self.binding.targets:
+            hist_kd: Union[float, Dict[str, float]] = self.binding.kd
+        else:
+            hist_kd = self.binding.targets
 
         history: SimulationResult = {
             "time": np.arange(steps) * self.integrator.dt,
@@ -77,10 +92,11 @@ class SimulationEngine:
             "cell_death": False,
             "death_step": None,
             "death_cause": None,
-            "inhibition": inhibition,
-            "drug_kd": self.binding.kd,
+            "inhibition": primary_inhibition,
+            "drug_kd": hist_kd,
             "params": custom_params or {},
-            "headless": self.solver.headless
+            "headless": self.solver.headless,
+            "species_names": self.integrator.topology.species
         }
 
         signaling_hist = []
@@ -107,10 +123,10 @@ class SimulationEngine:
                 self.integrator.dt = orig_dt
             
             # 2. Metabolic mapping (Signaling -> Metabolism)
-            constraints = self.bridge.get_constraints(state)
+            constraints, scalings = self.bridge.get_constraints_with_scalings(state)
             
             # 3. FBA solver
-            fba_result = self.solver.solve_step(constraints)
+            fba_result = self.solver.solve_step(constraints, scalings=scalings)
             
             if refine_feedback and fba_result["status"] == "optimal":
                 # Predictor-Corrector: 
@@ -127,8 +143,8 @@ class SimulationEngine:
                     self.integrator.dt = orig_dt
                 
                 # Re-run FBA with corrected state
-                constraints = self.bridge.get_constraints(state)
-                fba_result = self.solver.solve_step(constraints)
+                constraints, scalings = self.bridge.get_constraints_with_scalings(state)
+                fba_result = self.solver.solve_step(constraints, scalings=scalings)
 
             growth = fba_result["objective_value"]
             fluxes = fba_result["fluxes"]

@@ -223,11 +223,32 @@ class StochasticIntegrator:
                 f"state must be a numpy array of shape ({len(self.topology.species)},), got {type(state)} with shape {getattr(state, 'shape', 'N/A')}"
             )
 
-        # Validate inhibition and feedback parameters
-        if not (0 <= inhibition <= 1):
-            raise ValueError(
-                f"inhibition must be between 0 and 1, got {inhibition}"
-            )
+        # Handle multi-target inhibition
+        inhibition_vec = np.zeros(len(self.topology.species))
+        if isinstance(inhibition, (float, int)):
+            # Backward compatibility: single inhibition value applied to the designated target
+            inhibited_species = getattr(self.topology, "inhibited_species", None)
+            if inhibited_species and inhibited_species in self.topology.species:
+                idx = self.topology.species.index(inhibited_species)
+                inhibition_vec[idx] = float(inhibition)
+            else:
+                # If no inhibited species defined, apply to first node (legacy behavior)
+                inhibition_vec[0] = float(inhibition)
+        elif isinstance(inhibition, dict):
+            # Mapping of species names to inhibition levels
+            for name, val in inhibition.items():
+                if name in self.topology.species:
+                    idx = self.topology.species.index(name)
+                    inhibition_vec[idx] = val
+        elif isinstance(inhibition, np.ndarray):
+            if inhibition.shape == (len(self.topology.species),):
+                inhibition_vec = inhibition
+            else:
+                raise ValueError(f"Inhibition array shape mismatch: {inhibition.shape}")
+        
+        # Validate inhibition vector
+        if np.any((inhibition_vec < 0) | (inhibition_vec > 1)):
+            raise ValueError("All inhibition values must be between 0 and 1")
         
         if feedback is None:
             feedback = np.ones(len(self.topology.species))
@@ -239,15 +260,17 @@ class StochasticIntegrator:
         # Performance optimization: if using jitted topology, use it
         if self.topology.jitted_step_fn is not None:
             # We assume the jitted_step_fn has signature (state, dt, params, noise_scale, feedback)
-            params = np.concatenate((self.base_params, [inhibition]))
+            # The params usually expected by jitted functions include inhibition as the LAST element.
+            # For multi-target, we append the WHOLE inhibition vector.
+            params = np.concatenate((self.base_params, inhibition_vec))
             return self.topology.jitted_step_fn(state, self.dt, params, self.noise_scale, feedback)
 
         # Custom topology with provided drift_fn (non-jitted fallback)
         if self.topology.drift_fn is not None:
-            return self._custom_step(state, inhibition, feedback=feedback)
+            return self._custom_step(state, inhibition_vec, feedback=feedback)
 
         # Fallback to generic decay
-        return self._generic_step(state, inhibition, feedback=feedback)
+        return self._generic_step(state, inhibition_vec, feedback=feedback)
 
     def _custom_step(self, state, inhibition, feedback=None):
         """Step using a custom drift function provided in the topology."""

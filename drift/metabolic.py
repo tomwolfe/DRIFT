@@ -4,9 +4,14 @@ import logging
 from typing import List, Dict, Any, Union, Optional, Callable
 
 import difflib
+import warnings
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+class ScientificRiskWarning(UserWarning):
+    """Warning for biologically questionable mappings or parameter regimes."""
+    pass
 
 
 def sigmoidal_mapping(x, k=10, x0=0.5):
@@ -246,11 +251,19 @@ class MetabolicBridge:
                 if matched:
                     # Get similarity for logging
                     similarity = difflib.SequenceMatcher(None, rxn_id.lower(), matched.lower()).ratio()
-                    logger.warning(f"!!! SCIENTIFIC RISK: Fuzzy matched mapping reaction '{rxn_id}' to '{matched}' (similarity: {similarity:.2f}). "
-                                 "This may lead to misattribution of metabolic effects. "
-                                 "Recommendation: Use explicit reaction IDs from the model.")
+                    msg = (f"Fuzzy matched mapping reaction '{rxn_id}' to '{matched}' "
+                           f"(similarity: {similarity:.2f}). This may lead to misattribution of metabolic effects.")
+                    
+                    if similarity < 0.9:
+                        warnings.warn(msg, ScientificRiskWarning)
+                        logger.warning(f"!!! SCIENTIFIC RISK: {msg} Recommendation: Use explicit reaction IDs.")
+                    else:
+                        logger.info(f"Resolved reaction mapping: {rxn_id} -> {matched} (similarity: {similarity:.2f})")
+                        
                     mapping["reaction_id"] = matched
                 else:
+                    if self.strict_mapping:
+                        raise ValueError(f"STRICT MAPPING ERROR: Could not resolve reaction ID '{rxn_id}'")
                     logger.warning(f"Could not resolve reaction ID '{rxn_id}' in model via exact or fuzzy matching.")
                     all_resolved = False
                     
@@ -269,10 +282,16 @@ class MetabolicBridge:
                 matched = fuzzy_match_reaction_id(flux_id, model_rxn_ids)
                 if matched:
                     similarity = difflib.SequenceMatcher(None, flux_id.lower(), matched.lower()).ratio()
-                    logger.warning(f"Fuzzy matched reverse mapping flux '{flux_id}' to '{matched}' (similarity: {similarity:.2f}). "
-                                 "Recommendation: Use explicit IDs.")
+                    msg = f"Fuzzy matched reverse mapping flux '{flux_id}' to '{matched}' (similarity: {similarity:.2f})."
+                    if similarity < 0.9:
+                        warnings.warn(msg, ScientificRiskWarning)
+                        logger.warning(f"!!! SCIENTIFIC RISK: {msg}")
+                    else:
+                        logger.info(f"Resolved reverse mapping: {flux_id} -> {matched}")
                     rev_map["flux_id"] = matched
                 else:
+                    if self.strict_mapping:
+                        raise ValueError(f"STRICT MAPPING ERROR: Could not resolve reverse flux ID '{flux_id}'")
                     logger.warning(f"Could not resolve reverse mapping flux ID '{flux_id}' in model.")
                     all_resolved = False
                     
@@ -375,6 +394,51 @@ class MetabolicBridge:
 
         feedback = float(np.clip(growth_flux / self.basal_growth_rate, 0.0, 1.0))
         return feedback
+
+    def get_constraints_with_scalings(self, signaling_state: Union[List[float], np.ndarray]) -> tuple[Dict[str, float], Dict[str, float]]:
+        """
+        Translates signaling state to both constraints and raw scaling factors.
+        Useful for high-fidelity headless proxies.
+
+        Returns:
+            tuple: (constraints_dict, scalings_dict)
+        """
+        constraints: Dict[str, float] = {}
+        scalings: Dict[str, float] = {}
+        state_len = len(signaling_state)
+
+        for map_config in self.mappings:
+            idx = map_config.get("protein_idx")
+            name = map_config.get("protein_name")
+            rxn_id: str = map_config["reaction_id"]
+            base_vmax: float = map_config.get("base_vmax", 10.0)
+            influence: str = map_config.get("influence", "positive")
+            mapping_fn = map_config.get("mapping_fn")
+
+            if name is not None and self.species_names is not None and name in self.species_names:
+                idx = self.species_names.index(name)
+            
+            if idx is None or not (0 <= idx < state_len):
+                continue
+
+            protein_level = float(signaling_state[idx])
+            protein_level = max(0.0, min(1.0, protein_level))
+
+            if mapping_fn is not None:
+                scaling = mapping_fn(protein_level)
+            else:
+                basal = map_config.get("basal_scaling", 0.1)
+                max_s = map_config.get("max_scaling", 0.9)
+                
+                if influence == "positive":
+                    scaling = basal + max_s * protein_level
+                else:
+                    scaling = (basal + max_s) - max_s * protein_level
+
+            constraints[rxn_id] = -(base_vmax * scaling)
+            scalings[rxn_id] = scaling
+
+        return constraints, scalings
 
     def get_constraints(self, signaling_state: Union[List[float], np.ndarray]) -> Dict[str, float]:
         """
@@ -596,36 +660,42 @@ class DFBASolver:
             return
 
         self.model = model if model is not None else self._load_model_safe(model_name)
+        self._rxn_cache = {} # Cache for reaction objects to speed up solve_step
         
         # Pareto: Immediate validation to ensure the model is actually usable.
         if self.model:
             self.validate_model()
 
-    def _solve_proxy(self, constraints):
+    def _solve_proxy(self, constraints, scalings=None):
         """
         Algebraic proxy for FBA when no solver is available.
         Mimics growth based on the most limiting uptake constraint and stoichiometric realism.
         """
-        # In FBA, growth is limited by the substrate uptake (e.g., Glucose)
-        # uptake_flux = -lower_bound (since lower bound is negative for uptake)
-        uptake_fluxes = {k: -lb for k, lb in constraints.items() if lb < 0}
-        
-        if not uptake_fluxes:
-            growth = self.proxy_params["base_growth"]
-        else:
-            # Pareto: More realistic proxy using Michaelis-Menten saturation for growth
-            # and considering multiple potential substrates if they were mapped.
-            # growth = sum(yield_i * [S_i]/(Km_i + [S_i]))
-            effective_uptakes = []
-            for rxn_id, val in uptake_fluxes.items():
-                # Apply a simple saturation curve to mimic enzyme kinetics
-                km_proxy = 5.0 
-                saturated_val = val / (km_proxy + val) * (km_proxy + 10.0) # normalized to 10
-                effective_uptakes.append(saturated_val)
+        if scalings:
+            # The most restrictive reaction is the one with the lowest scaling factor
+            # (which represents Vmax / base_vmax)
+            min_scaling = min(scalings.values()) if scalings else 1.0
             
-            # Growth is limited by the most restrictive (minimum) substrate
-            min_uptake = min(effective_uptakes)
-            growth = min_uptake * self.proxy_params["yield_coefficient"]
+            # Growth is non-linearly proportional to the most limiting scaling
+            # Use a slightly non-linear relationship to mimic metabolic trade-offs
+            growth = self.proxy_params["base_growth"] * (min_scaling ** 0.7)
+            
+            # Map back to fluxes for feedback
+            uptake_fluxes = {k: -lb for k, lb in constraints.items() if lb < 0}
+        else:
+            # Fallback to old logic if no scalings provided
+            uptake_fluxes = {k: -lb for k, lb in constraints.items() if lb < 0}
+            if not uptake_fluxes:
+                growth = self.proxy_params["base_growth"]
+            else:
+                effective_uptakes = []
+                for rxn_id, val in uptake_fluxes.items():
+                    km_proxy = 5.0 
+                    saturated_val = val / (km_proxy + val) * (km_proxy + 10.0)
+                    effective_uptakes.append(saturated_val)
+                
+                min_uptake = min(effective_uptakes)
+                growth = (min_uptake / 10.0) * self.proxy_params["base_growth"]
 
         # Simulate some basic fluxes for feedback
         fluxes = {k: -lb for k, lb in constraints.items()}
@@ -633,20 +703,20 @@ class DFBASolver:
         fluxes["biomass"] = growth
         
         # Energy proxy: proportional to growth but with slight non-linearity
-        # Mimics the ATP maintenance and varying yield
         fluxes["ATPS4r"] = growth * 25.0 * (1.0 + 0.1 * np.sin(growth * 10)) 
         
         # Add basic metabolite identifiers often used in feedback
-        fluxes["EX_glc__D_e"] = uptake_fluxes.get("EX_glc__D_e", 10.0)
-        fluxes["EX_o2_e"] = 20.0 # Assume aerobic by default
+        if "EX_glc__D_e" not in fluxes:
+            fluxes["EX_glc__D_e"] = 10.0
+        if "EX_o2_e" not in fluxes:
+            fluxes["EX_o2_e"] = 20.0
 
         return {
             "objective_value": growth,
             "fluxes": fluxes,
             "status": "proxied",
             "diagnostic": "FBA results approximated via Solver-Aware Proxy (QUALITATIVE ONLY)",
-            "QUALITATIVE_NOTICE": "This result was generated in Headless Mode using an enhanced algebraic proxy. "
-                                 "While it mimics stoichiometric saturation, it is still a QUALITATIVE approximation."
+            "QUALITATIVE_NOTICE": "This result was generated in Headless Mode using an enhanced Limiting Substrate Proxy."
         }
 
     def get_fingerprint(self) -> str:
@@ -822,7 +892,7 @@ class DFBASolver:
             logger.critical(error_msg)
             raise RuntimeError(error_msg) from e
 
-    def solve_step(self, constraints):
+    def solve_step(self, constraints, scalings=None):
         """
         Solves FBA with specific constraints and provides diagnostics on failure.
         """
@@ -830,7 +900,7 @@ class DFBASolver:
             if self.strict:
                 raise RuntimeError("DFBASolver: Attempted to solve FBA in strict mode with no available solver.")
             # Headless mode: return proxied result
-            return self._solve_proxy(constraints)
+            return self._solve_proxy(constraints, scalings=scalings)
 
         if not isinstance(constraints, dict):
             raise ValueError(f"constraints must be a dictionary, got {type(constraints)}")
@@ -839,7 +909,12 @@ class DFBASolver:
         applied_constraints = {}
         for rxn_id, lb in constraints.items():
             try:
-                rxn = self.model.reactions.get_by_id(rxn_id)
+                if rxn_id in self._rxn_cache:
+                    rxn = self._rxn_cache[rxn_id]
+                else:
+                    rxn = self.model.reactions.get_by_id(rxn_id)
+                    self._rxn_cache[rxn_id] = rxn
+                
                 rxn.lower_bound = lb
                 applied_constraints[rxn_id] = lb
             except KeyError:

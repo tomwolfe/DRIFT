@@ -1,36 +1,52 @@
+from typing import Union, Dict, List, Optional
+
 class BindingEngine:
     """Calculates protein inhibition percentage based on Kd and [Drug]."""
 
-    kd: float
-    hill_coefficient: float
-
-    def __init__(self, kd: float, hill_coefficient: float = 1.0):
+    def __init__(self, targets: Optional[Union[float, Dict[str, float]]] = None, hill_coefficient: float = 1.0, kd: Optional[float] = None):
         """
         Initialize the BindingEngine.
 
         Args:
-            kd (float): Dissociation constant of the drug
+            targets (float or dict): If float, the Kd for the default inhibited species.
+                                     If dict, mapping of species names to their respective Kd values.
             hill_coefficient (float): Hill coefficient for cooperativity (default 1.0)
+            kd (float, optional): For backward compatibility, same as targets if targets is float.
 
         Raises:
             ValueError: If kd is not positive
         """
-        if kd <= 0:
-            raise ValueError(f"kd must be positive, got {kd}")
         if hill_coefficient <= 0:
             raise ValueError(
                 f"hill_coefficient must be positive, got {hill_coefficient}"
             )
+        
+        eff_targets = targets if targets is not None else kd
+        if eff_targets is None:
+            raise ValueError("Must provide either targets or kd")
 
-        self.kd = kd
+        if isinstance(eff_targets, (int, float)):
+            if eff_targets <= 0:
+                raise ValueError(f"kd must be positive, got {eff_targets}")
+            self.targets = {"default": float(eff_targets)}
+            self.kd = float(eff_targets) # Backward compatibility
+        else:
+            for name, val in eff_targets.items():
+                if val <= 0:
+                    raise ValueError(f"kd for {name} must be positive, got {val}")
+            self.targets = {name: float(val) for name, val in eff_targets.items()}
+            # For backward compatibility, use the first Kd if available
+            self.kd = next(iter(self.targets.values())) if self.targets else 1.0
+
         self.hill_coefficient = hill_coefficient
 
-    def calculate_occupancy(self, drug_concentration: float) -> float:
+    def calculate_occupancy(self, drug_concentration: float, target_name: str = "default") -> float:
         """
         Returns the fraction of target bound by drug [0, 1].
 
         Args:
             drug_concentration (float): Concentration of the drug
+            target_name (str): Name of the target species to calculate occupancy for.
 
         Returns:
             float: Fraction of target bound by drug [0, 1]
@@ -43,19 +59,22 @@ class BindingEngine:
         if drug_concentration == 0:
             return 0.0
 
+        kd = self.targets.get(target_name, self.kd)
+
         # Hill Equation: theta = [D]^n / ([D]^n + Kd^n)
         numerator = drug_concentration**self.hill_coefficient
-        denominator = numerator + self.kd**self.hill_coefficient
+        denominator = numerator + kd**self.hill_coefficient
         return float(numerator / denominator)
 
-    def calculate_inhibition(self, drug_concentration: float) -> float:
+    def calculate_inhibition(self, drug_concentration: float) -> Dict[str, float]:
         """
-        Returns inhibition percentage [0.0, 1.0].
+        Returns inhibition percentage [0.0, 1.0] for all targets.
 
         Args:
             drug_concentration (float): Concentration of the drug
 
         Returns:
-            float: Inhibition percentage [0.0, 1.0]
+            dict: Mapping of target names to inhibition percentages [0.0, 1.0]
         """
-        return float(self.calculate_occupancy(drug_concentration))
+        return {name: self.calculate_occupancy(drug_concentration, name) for name in self.targets}
+

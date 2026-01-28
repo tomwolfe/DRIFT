@@ -128,10 +128,10 @@ def _single_sim_wrapper(args) -> SimulationResult:
             solver = cached["solver"]
             integrator = cached["integrator"]
             sim_bridge = bridge or cached["bridge"]
-            binding = BindingEngine(kd=drug_kd)
+            binding = BindingEngine(targets=drug_kd)
         else:
             # Fallback for non-pool execution or if init_worker missed this key
-            binding = BindingEngine(kd=drug_kd)
+            binding = BindingEngine(targets=drug_kd)
             integrator = StochasticIntegrator(dt=0.1, noise_scale=0.03, topology=eff_topology)
             sim_bridge = bridge or MetabolicBridge(species_names=eff_topology.species)
             
@@ -165,8 +165,8 @@ class Workbench:
 
     def __init__(
         self, 
-        drug_kd=1.0, 
-        drug_concentration=2.0, 
+        drug_kd: Union[float, Dict[str, float]] = 1.0, 
+        drug_concentration: float = 2.0, 
         model_name="textbook", 
         topology=None,
         bridge=None,
@@ -182,7 +182,7 @@ class Workbench:
         Initialize the Workbench with specified parameters.
 
         Args:
-            drug_kd (float): Dissociation constant of the drug (in concentration_units)
+            drug_kd (float or dict): Dissociation constant(s) of the drug (in concentration_units)
             drug_concentration (float): Concentration of the drug in the system (in concentration_units)
             model_name (str): Name of the metabolic model to use
             topology (Topology, optional): Signaling network topology
@@ -195,8 +195,17 @@ class Workbench:
             strict_mapping (bool): If True, enforces strict reaction ID mapping in the bridge.
             random_state (int, optional): Seed for reproducibility.
         """
-        if drug_kd <= 0:
-            raise ValueError(f"drug_kd must be positive, got {drug_kd}")
+        # Validate drug_kd
+        if isinstance(drug_kd, (int, float)):
+            if drug_kd <= 0:
+                raise ValueError(f"drug_kd must be positive, got {drug_kd}")
+        elif isinstance(drug_kd, dict):
+            for name, val in drug_kd.items():
+                if val <= 0:
+                    raise ValueError(f"drug_kd for {name} must be positive, got {val}")
+        else:
+            raise TypeError("drug_kd must be float or dict")
+
         if drug_concentration < 0:
             raise ValueError(
                 f"drug_concentration must be non-negative, got {drug_concentration}"
@@ -207,7 +216,7 @@ class Workbench:
             np.random.seed(random_state)
             random.seed(random_state)
 
-        self.binding = BindingEngine(kd=drug_kd)
+        self.binding = BindingEngine(targets=drug_kd)
         self.topology = topology
         self.signaling = StochasticIntegrator(dt=0.1, noise_scale=0.03, topology=topology)
         
@@ -353,7 +362,7 @@ class Workbench:
         if n_jobs == -1:
             n_jobs = os.cpu_count() or 1
 
-        base_kd = self.binding.kd
+        base_kd = self.binding.targets
         sim_args = []
         from .topology import get_default_topology
         eff_topology = self.topology or get_default_topology()
@@ -370,7 +379,12 @@ class Workbench:
             if self.random_state is not None:
                 np.random.seed(sim_seeds[i])
 
-            perturbed_kd = base_kd * np.random.uniform(0.8, 1.2)
+            if isinstance(base_kd, dict):
+                perturbed_kd = {name: kd * np.random.uniform(0.8, 1.2) for name, kd in base_kd.items()}
+            else:
+                # Should not happen with new BindingEngine but for safety
+                perturbed_kd = float(base_kd) * np.random.uniform(0.8, 1.2)
+
             custom_params = {}
             if perturb_params:
                 for p_name in perturb_params:

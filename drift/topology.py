@@ -292,14 +292,37 @@ def pi3k_akt_mtor_drift(state, params, feedback=None):
     if len(state) < 3:
         return np.zeros_like(state)
     pi3k, akt, mtor = state[0], state[1], state[2]
-    (k_pi3k_base, k_pi3k_deg, k_akt_act, k_akt_deact, k_mtor_act, k_mtor_deact, inhibition) = params[:7]
+    
+    # Generic parameter mapping: first N are base params, last M are inhibitions
+    # For this model, we expect 6 base params and 3 inhibition params
+    k_pi3k_base, k_pi3k_deg = params[0], params[1]
+    k_akt_act, k_akt_deact = params[2], params[3]
+    k_mtor_act, k_mtor_deact = params[4], params[5]
+    
+    # Inhibition can be a single scalar (legacy) or a vector matching species
+    if len(params) == 7:
+        inh_pi3k = params[6]
+        inh_akt = 0.0
+        inh_mtor = 0.0
+    elif len(params) >= 9:
+        inh_pi3k, inh_akt, inh_mtor = params[6], params[7], params[8]
+    else:
+        inh_pi3k = 0.0
+        inh_akt = 0.0
+        inh_mtor = 0.0
+
     fb = feedback if feedback is not None else np.ones(len(state))
-    effective_pi3k = pi3k * (1.0 - inhibition)
+    
+    effective_pi3k = pi3k * (1.0 - inh_pi3k)
+    effective_akt = akt * (1.0 - inh_akt)
+    
     dpi3k = k_pi3k_base * fb[0] - k_pi3k_deg * pi3k
     dakt = k_akt_act * fb[1] * effective_pi3k * (1.0 - akt) - k_akt_deact * akt
-    dmtor = k_mtor_act * fb[2] * akt * (1.0 - mtor) - k_mtor_deact * mtor
+    dmtor = k_mtor_act * fb[2] * effective_akt * (1.0 - mtor) - k_mtor_deact * mtor
+    
     res = np.zeros_like(state)
     res[0], res[1], res[2] = dpi3k, dakt, dmtor
+    
     if len(state) > 3:
         for i in range(3, len(state)):
             res[i] = 0.1 * (0.5 - state[i])
@@ -310,16 +333,35 @@ def complex_signaling_drift(state, params, feedback=None):
     if len(state) < 4:
         return np.zeros_like(state)
     pi3k, akt, mtor, ampk = state[0], state[1], state[2], state[3]
-    (k_pi3k_base, k_pi3k_deg, k_akt_act, k_akt_deact, k_mtor_act, k_mtor_deact, k_ampk_act, k_ampk_deact, inhibition) = params[:9]
+    
+    # Expect 8 base params and 4 inhibition params
+    k_pi3k_base, k_pi3k_deg = params[0], params[1]
+    k_akt_act, k_akt_deact = params[2], params[3]
+    k_mtor_act, k_mtor_deact = params[4], params[5]
+    k_ampk_act, k_ampk_deact = params[6], params[7]
+
+    if len(params) == 9:
+        inh_pi3k = params[8]
+        inh_akt = inh_mtor = inh_ampk = 0.0
+    elif len(params) >= 12:
+        inh_pi3k, inh_akt, inh_mtor, inh_ampk = params[8], params[9], params[10], params[11]
+    else:
+        inh_pi3k = inh_akt = inh_mtor = inh_ampk = 0.0
+
     fb = feedback if feedback is not None else np.ones(len(state))
     mtor_feedback = 1.0 / (1.0 + 5.0 * mtor) 
     dpi3k = k_pi3k_base * fb[0] * mtor_feedback - k_pi3k_deg * pi3k
-    effective_pi3k = pi3k * (1.0 - inhibition)
+    
+    effective_pi3k = pi3k * (1.0 - inh_pi3k)
+    effective_akt = akt * (1.0 - inh_akt)
+    
     dakt = k_akt_act * fb[1] * effective_pi3k * (1.0 - akt) - k_akt_deact * akt
     ampk_inhibition = 1.0 / (1.0 + 10.0 * ampk)
-    dmtor = k_mtor_act * fb[2] * akt * ampk_inhibition * (1.0 - mtor) - k_mtor_deact * mtor
+    dmtor = k_mtor_act * fb[2] * effective_akt * ampk_inhibition * (1.0 - mtor) - k_mtor_deact * mtor
+    
     energy_state = fb[3]
     dampk = k_ampk_act * (1.0 - energy_state) * (1.0 - ampk) - k_ampk_deact * ampk
+    
     res = np.zeros_like(state)
     res[0], res[1], res[2], res[3] = dpi3k, dakt, dmtor, dampk
     return res
