@@ -38,15 +38,12 @@ def langevin_step_generic(state, dt, params, noise_scale, drift_fn, feedback=Non
     # Update state
     new_state = state + drift * dt + b * dw + milstein_corr
 
-    # Reflection principle
+    # Enforce non-negativity (clamping) to prevent numerical divergence
     for i in range(len(new_state)):
-        if new_state[i] < 0:
-            new_state[i] = -new_state[i]
-        if new_state[i] > 1:
-            new_state[i] = 2.0 - new_state[i]
-
-        if new_state[i] < 0: new_state[i] = eps
-        if new_state[i] > 1: new_state[i] = 1.0 - eps
+        val = new_state[i]
+        if val < 0: val = 0
+        if val > 1: val = 1
+        new_state[i] = val
 
     return new_state
 
@@ -91,15 +88,12 @@ def langevin_step(state, dt, params, noise_scale, feedback=None):
     # Update state
     new_state = state + drift * dt + b * dw + milstein_corr
 
-    # Reflection principle
+    # Enforce non-negativity (clamping) to prevent numerical divergence
     for i in range(len(new_state)):
-        if new_state[i] < 0:
-            new_state[i] = -new_state[i]
-        if new_state[i] > 1:
-            new_state[i] = 2.0 - new_state[i]
-
-        if new_state[i] < 0: new_state[i] = eps
-        if new_state[i] > 1: new_state[i] = 1.0 - eps
+        val = new_state[i]
+        if val < 0: val = 0
+        if val > 1: val = 1
+        new_state[i] = val
 
     return new_state
 
@@ -126,15 +120,12 @@ def create_langevin_integrator(drift_fn):
         # Update state
         new_state = state + drift * dt + b * dw + milstein_corr
 
-        # Reflection principle
+        # Enforce non-negativity (clamping) to prevent numerical divergence
         for i in range(len(new_state)):
-            if new_state[i] < 0:
-                new_state[i] = -new_state[i]
-            if new_state[i] > 1:
-                new_state[i] = 2.0 - new_state[i]
-            
-            if new_state[i] < 0: new_state[i] = eps
-            if new_state[i] > 1: new_state[i] = 1.0 - eps
+            val = new_state[i]
+            if val < 0: val = 0
+            if val > 1: val = 1
+            new_state[i] = val
 
         return new_state
         
@@ -237,8 +228,12 @@ class StochasticIntegrator:
         elif isinstance(inhibition, dict):
             # Mapping of species names to inhibition levels
             for name, val in inhibition.items():
-                if name in self.topology.species:
-                    idx = self.topology.species.index(name)
+                target_name = name
+                if target_name == "default":
+                    target_name = getattr(self.topology, "inhibited_species", self.topology.species[0])
+                
+                if target_name in self.topology.species:
+                    idx = self.topology.species.index(target_name)
                     inhibition_vec[idx] = val
         elif isinstance(inhibition, np.ndarray):
             if inhibition.shape == (len(self.topology.species),):
@@ -249,6 +244,7 @@ class StochasticIntegrator:
         # Validate inhibition vector
         if np.any((inhibition_vec < 0) | (inhibition_vec > 1)):
             raise ValueError("All inhibition values must be between 0 and 1")
+        
         
         if feedback is None:
             feedback = np.ones(len(self.topology.species))

@@ -6,6 +6,8 @@ from typing import List, Dict, Any, Union, Optional, Callable
 import difflib
 import warnings
 
+from .core.exceptions import DesyncError, SolverError
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -134,8 +136,8 @@ class MetabolicBridge:
     """Maps signaling protein concentrations to metabolic Vmax constraints."""
 
     def __init__(
-        self, 
-        mappings: Optional[List[Dict[str, Any]]] = None, 
+        self,
+        mappings: Optional[List[Dict[str, Any]]] = None,
         reverse_mappings: Optional[List[Dict[str, Any]]] = None,
         species_names: Optional[List[str]] = None,
         strict_mapping: bool = False,
@@ -251,8 +253,9 @@ class MetabolicBridge:
                 if matched:
                     # Get similarity for logging
                     similarity = difflib.SequenceMatcher(None, rxn_id.lower(), matched.lower()).ratio()
-                    msg = (f"Fuzzy matched mapping reaction '{rxn_id}' to '{matched}' "
-                           f"(similarity: {similarity:.2f}). This may lead to misattribution of metabolic effects.")
+                    msg = (
+                        f"Fuzzy matched mapping reaction '{rxn_id}' to '{matched}' "
+                        f"(similarity: {similarity:.2f}). This may lead to misattribution of metabolic effects.")
                     
                     if similarity < 0.9:
                         warnings.warn(msg, ScientificRiskWarning)
@@ -450,46 +453,49 @@ class MetabolicBridge:
         Returns:
             dict: Dictionary mapping reaction IDs to constraint values
         """
-        if (
-            not isinstance(signaling_state, (list, tuple, np.ndarray))
-        ):
-            raise ValueError(
-                f"signaling_state must be a list, tuple, or array, got {type(signaling_state)}"
+        # Strict type-checking
+        if not isinstance(signaling_state, np.ndarray):
+             if isinstance(signaling_state, (list, tuple)):
+                 signaling_state = np.array(signaling_state)
+             else:
+                 raise ValueError(f"signaling_state must be a numpy array, got {type(signaling_state)}")
+
+        if self.species_names is None:
+            raise DesyncError("MetabolicBridge requires species_names for name-to-index resolution.")
+
+        if len(signaling_state) != len(self.species_names):
+            raise DesyncError(
+                f"Signaling state length ({len(signaling_state)}) desynchronized from "
+                f"bridge species_names length ({len(self.species_names)})."
             )
 
+        # Name-to-index resolution via mapping dictionary
+        state_map = dict(zip(self.species_names, signaling_state))
         constraints: Dict[str, float] = {}
-        state_len = len(signaling_state)
 
         for map_config in self.mappings:
-            idx = map_config.get("protein_idx")
             name = map_config.get("protein_name")
             rxn_id: str = map_config["reaction_id"]
             base_vmax: float = map_config.get("base_vmax", 10.0)
             influence: str = map_config.get("influence", "positive")
             mapping_fn = map_config.get("mapping_fn")
 
-            # Resolve name to index (Enforced Default)
-            if name is not None:
-                if self.species_names is not None:
-                    if name in self.species_names:
-                        idx = self.species_names.index(name)
+            try:
+                if name is not None:
+                    protein_level = float(state_map[name])
+                else:
+                    # Fallback to index if name is missing in mapping configuration
+                    idx = map_config.get("protein_idx")
+                    if idx is not None and 0 <= idx < len(signaling_state):
+                        protein_level = float(signaling_state[idx])
                     else:
-                        raise ValueError(f"Protein name '{name}' not found in species_names {self.species_names}. "
-                                         "Ensure your Topology matches your MetabolicBridge.")
-                elif idx is None:
-                    # No species names and no index provided
-                    raise ValueError(f"Protein name '{name}' provided but MetabolicBridge has no 'species_names' "
-                                     "to resolve it, and no 'protein_idx' was specified.")
-
-            if idx is None or not (0 <= idx < state_len):
-                logger.warning(f"Invalid protein index {idx} (name: {name}) for state of length {state_len}, skipping mapping")
-                continue
-
-            protein_level = float(signaling_state[idx])
+                        raise DesyncError(f"Mapping for {rxn_id} lacks both valid protein_name and protein_idx.")
+            except KeyError:
+                raise DesyncError(f"Protein '{name}' from mapping not found in signaling state. Desynchronization detected.")
 
             if not (0 <= protein_level <= 1):
                 logger.warning(
-                    f"Protein level {protein_level} out of range [0,1], clamping"
+                    f"Protein level {protein_level} for {name or rxn_id} out of range [0,1], clamping"
                 )
                 protein_level = max(0.0, min(1.0, protein_level))
 
@@ -497,7 +503,7 @@ class MetabolicBridge:
                 # Use custom mapping function
                 scaling = mapping_fn(protein_level)
             else:
-                # Configuration-based scaling (Pareto improvement: avoid hardcoded arbitrary constants)
+                # Configuration-based scaling
                 basal = map_config.get("basal_scaling", 0.1)
                 max_s = map_config.get("max_scaling", 0.9)
                 
@@ -507,7 +513,6 @@ class MetabolicBridge:
                     scaling = (basal + max_s) - max_s * protein_level
 
             # COBRA exchange reactions: Flux > -UB (uptake)
-            # scale the magnitude of the negative lower bound.
             constraints[rxn_id] = -(base_vmax * scaling)
 
         return constraints
@@ -660,7 +665,7 @@ class DFBASolver:
             return
 
         self.model = model if model is not None else self._load_model_safe(model_name)
-        self._rxn_cache = {} # Cache for reaction objects to speed up solve_step
+        self._rxn_cache = {} # Cache for reaction objects to speed up optimize
         
         # Pareto: Immediate validation to ensure the model is actually usable.
         if self.model:
@@ -892,7 +897,7 @@ class DFBASolver:
             logger.critical(error_msg)
             raise RuntimeError(error_msg) from e
 
-    def solve_step(self, constraints, scalings=None):
+    def optimize(self, constraints, scalings=None):
         """
         Solves FBA with specific constraints and provides diagnostics on failure.
         """
@@ -937,17 +942,16 @@ class DFBASolver:
                 if limiting_factors:
                     diag_msg = f"Potential bottlenecks: {', '.join(limiting_factors[:3])}"
                 
-                # Try to find the specific metabolite that is limiting
-                # In FBA, this is often the one where the shadow price would be highest if it were feasible
-                # But since it's infeasible, we can look at the 'irreducible inconsistent subsystem' (IIS)
-                # For now, we'll provide the list of restrictive constraints.
+                import hashlib
+                error_fingerprint = hashlib.sha256(f"{solution.status}_{diag_msg}_{self.get_fingerprint()}".encode()).hexdigest()[:8]
                 
                 return {
                     "objective_value": 0.0,
                     "fluxes": {},
                     "status": solution.status,
                     "diagnostic": diag_msg,
-                    "bottlenecks": applied_constraints
+                    "bottlenecks": applied_constraints,
+                    "error_fingerprint": error_fingerprint
                 }
 
             return {
@@ -957,10 +961,17 @@ class DFBASolver:
             }
         except Exception as e:
             logger.error(f"FBA optimization failed: {e}")
+            import hashlib
+            error_fingerprint = hashlib.sha256(f"failed_{str(e)}_{self.get_fingerprint()}".encode()).hexdigest()[:8]
             return {
                 "objective_value": 0.0,
                 "fluxes": {},
                 "status": "failed",
                 "error": str(e),
-                "diagnostic": "Solver error or numerical instability"
+                "diagnostic": "Solver error or numerical instability",
+                "error_fingerprint": error_fingerprint
             }
+
+    def solve_step(self, constraints, scalings=None):
+        """Backward compatibility alias for optimize."""
+        return self.optimize(constraints, scalings=scalings)

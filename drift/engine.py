@@ -126,7 +126,7 @@ class SimulationEngine:
             constraints, scalings = self.bridge.get_constraints_with_scalings(state)
             
             # 3. FBA solver
-            fba_result = self.solver.solve_step(constraints, scalings=scalings)
+            fba_result = self.solver.optimize(constraints, scalings=scalings)
             
             if refine_feedback and fba_result["status"] == "optimal":
                 # Predictor-Corrector: 
@@ -144,7 +144,7 @@ class SimulationEngine:
                 
                 # Re-run FBA with corrected state
                 constraints, scalings = self.bridge.get_constraints_with_scalings(state)
-                fba_result = self.solver.solve_step(constraints, scalings=scalings)
+                fba_result = self.solver.optimize(constraints, scalings=scalings)
 
             growth = fba_result["objective_value"]
             fluxes = fba_result["fluxes"]
