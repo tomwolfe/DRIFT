@@ -66,7 +66,7 @@ class BindingEngine:
         denominator = numerator + kd**self.hill_coefficient
         return float(numerator / denominator)
 
-    def calculate_inhibition(self, drug_concentration: float) -> Dict[str, float]:
+    def calculate_inhibition(self, drug_concentration: float) -> Union[float, Dict[str, float]]:
         """
         Returns inhibition percentage [0.0, 1.0] for all targets.
 
@@ -74,7 +74,10 @@ class BindingEngine:
             drug_concentration (float): Concentration of the drug
 
         Returns:
-            dict: Mapping of target names to inhibition percentages [0.0, 1.0]
+            Union[float, dict]: Inhibition percentage(s) [0.0, 1.0]
         """
-        return {name: self.calculate_occupancy(drug_concentration, name) for name in self.targets}
+        results = {name: self.calculate_occupancy(drug_concentration, name) for name in self.targets}
+        if len(results) == 1 and "default" in results:
+            return results["default"]
+        return results
 

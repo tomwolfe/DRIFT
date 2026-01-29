@@ -1,9 +1,10 @@
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
+from typing import Dict, Any, List, Optional, Union
 
 
-def plot_death_diagnostics(history):
+def plot_death_diagnostics(history: Dict[str, Any]) -> Optional[go.Figure]:
     """
     Visualizes the cause of metabolic collapse (Cell Death).
     Identifies which signaling-driven constraints were most restrictive.
@@ -12,8 +13,8 @@ def plot_death_diagnostics(history):
         print("No cell death detected in this history. Diagnostic plot skipped.")
         return None
 
-    death_step = history.get("death_step", 0)
-    diag_msg = history.get("death_cause", "Unknown")
+    death_step = int(history.get("death_step", 0))
+    diag_msg = str(history.get("death_cause", "Unknown"))
     
     # Extract signaling state at death
     signaling_at_death = history["signaling"][death_step]
@@ -59,7 +60,7 @@ def plot_death_diagnostics(history):
     return fig
 
 
-def create_dashboard(results):
+def create_dashboard(results: Dict[str, Any]) -> go.Figure:
     """
     Creates a multi-panel Plotly dashboard from simulation results.
 
@@ -112,7 +113,12 @@ def create_dashboard(results):
 
     # 1. Sensitivity Analysis (Top Right)
     # Correlation between perturbed Kd and final growth
-    perturbed_kds = [h["drug_kd"] for h in all_histories]
+    def _extract_kd(kd_val: Union[float, Dict[str, float]]) -> float:
+        if isinstance(kd_val, dict):
+            return float(np.mean(list(kd_val.values())))
+        return float(kd_val)
+
+    perturbed_kds = [_extract_kd(h["drug_kd"]) for h in all_histories]
     final_growths_pct = [(h["growth"][-1] / basal_growth) * 100 for h in all_histories]
 
     fig.add_trace(

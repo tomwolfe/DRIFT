@@ -4,6 +4,7 @@ from typing import Dict, Any, Optional, List, TypedDict, Union
 from .binding import BindingEngine
 from .signaling import StochasticIntegrator
 from .metabolic import MetabolicBridge, DFBASolver
+from .core.reproducibility import get_rng
 
 logger = logging.getLogger(__name__)
 
@@ -33,12 +34,17 @@ class SimulationEngine:
         integrator: StochasticIntegrator,
         solver: DFBASolver,
         bridge: MetabolicBridge,
-        binding: BindingEngine
+        binding: BindingEngine,
+        rng: Optional[np.random.Generator] = None
     ):
         self.integrator = integrator
         self.solver = solver
         self.bridge = bridge
         self.binding = binding
+        self.rng = rng or get_rng()
+        
+        # Sync RNG with integrator
+        self.integrator.rng = self.rng
 
     def run(
         self,
@@ -53,7 +59,11 @@ class SimulationEngine:
         Runs the simulation loop.
         """
         if seed is not None:
-            self.integrator.set_seed(seed)
+            self.rng = get_rng(seed)
+            self.integrator.rng = self.rng
+            # Also seed Numba for this seed
+            from .signaling import seed_numba
+            seed_numba(seed)
 
         # Apply custom signaling parameters if provided
         if custom_params:
@@ -65,8 +75,6 @@ class SimulationEngine:
         
         # Calculate a representative inhibition for logging/history
         if isinstance(inhibition, dict):
-            # Use the mean inhibition as the single value for history if needed, 
-            # or just the first one. For history["inhibition"], we'll take the max.
             primary_inhibition = max(inhibition.values()) if inhibition else 0.0
         else:
             primary_inhibition = inhibition
@@ -86,8 +94,8 @@ class SimulationEngine:
 
         history: SimulationResult = {
             "time": np.arange(steps) * self.integrator.dt,
-            "signaling": np.array([]), # Placeholder
-            "growth": np.array([]),    # Placeholder
+            "signaling": np.zeros((steps, len(self.integrator.topology.species))), 
+            "growth": np.zeros(steps),
             "status": [],
             "cell_death": False,
             "death_step": None,
@@ -168,3 +176,4 @@ class SimulationEngine:
         history["signaling"] = np.array(signaling_hist)
         history["growth"] = np.array(growth_hist)
         return history
+

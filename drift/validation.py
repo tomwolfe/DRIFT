@@ -23,7 +23,7 @@ class ExternalValidator:
         if experimental_data_path:
             self.load_experimental_data(experimental_data_path)
 
-    def load_experimental_data(self, path: str):
+    def load_experimental_data(self, path: str) -> None:
         """Loads experimental data from a file."""
         if path.endswith(".csv"):
             self.exp_data = pd.read_csv(path)
@@ -38,7 +38,7 @@ class ExternalValidator:
         simulation_history: Dict[str, Any], 
         mapping: Dict[str, str],
         time_col: str = "time"
-    ) -> Dict[str, float]:
+    ) -> Dict[str, Any]:
         """
         Compare simulation history with experimental data.
         
@@ -54,7 +54,7 @@ class ExternalValidator:
         if self.exp_data is None:
             raise ValueError("No experimental data loaded.")
 
-        results = {}
+        results: Dict[str, Any] = {}
         sim_time = simulation_history["time"]
         
         from scipy.interpolate import CubicSpline
@@ -101,8 +101,8 @@ class ExternalValidator:
                 continue
 
             # Calculate metrics
-            mse = np.mean((sim_val - exp_val)**2)
-            corr = np.corrcoef(sim_val, exp_val)[0, 1]
+            mse = float(np.mean((sim_val - exp_val)**2))
+            corr = float(np.corrcoef(sim_val, exp_val)[0, 1])
             
             results[sim_key] = {
                 "mse": mse,
@@ -117,7 +117,7 @@ class ExternalValidator:
         mapping: Dict[str, str],
         time_col: str = "time",
         output_path: Optional[str] = None
-    ):
+    ) -> None:
         """Visualizes the comparison between simulation and experiment."""
         if self.exp_data is None:
             raise ValueError("No experimental data loaded.")

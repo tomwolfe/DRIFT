@@ -27,7 +27,7 @@ class Topology:
         self.jitted_step_fn = jitted_step_fn
 
     @classmethod
-    def from_json(cls, json_path: str):
+    def from_json(cls, json_path: str) -> "Topology":
         """Loads a topology from a JSON file."""
         with open(json_path, "r") as f:
             data = json.load(f)
@@ -39,7 +39,7 @@ class Topology:
         )
 
     @classmethod
-    def from_sbml(cls, sbml_path: str, inhibited_species: Optional[str] = None):
+    def from_sbml(cls, sbml_path: str, inhibited_species: Optional[str] = None) -> "Topology":
         """
         Loads a topology from an SBML file.
         Supports both SBML Core and SBML-qual (qualitative models).
@@ -82,7 +82,7 @@ class Topology:
         drift_fn = None
         try:
             import roadrunner
-            def rr_drift_fn(state, params, inhibition=0.0, feedback=None):
+            def rr_drift_fn(state: np.ndarray, params: Any, inhibition: float = 0.0, feedback: Optional[np.ndarray] = None) -> Any:
                 rr = roadrunner.RoadRunner(sbml_path)
                 rr.reset()
                 for i, s_id in enumerate(species):
@@ -107,7 +107,7 @@ class Topology:
         )
 
     @classmethod
-    def _from_sbml_qual(cls, model, qual_ext, inhibited_species: Optional[str] = None):
+    def _from_sbml_qual(cls, model: Any, qual_ext: Any, inhibited_species: Optional[str] = None) -> "Topology":
         """Internal helper to parse SBML-qual models and generate a logic-based drift function."""
         try:
             import libsbml
@@ -119,7 +119,7 @@ class Topology:
         parameters = {"k_drift": 0.5, "k_decay": 0.1}
         
         import re
-        def sanitize(sid):
+        def sanitize(sid: str) -> str:
             return re.sub(r'[^a-zA-Z0-9_]', '_', sid)
         
         clean_ids = {s: sanitize(s) for s in species_ids}
@@ -208,7 +208,7 @@ class Topology:
         )
 
     @staticmethod
-    def _generate_interpreted_qual_drift(species: List[str], qual_ext: Any, inhibited_species: Optional[str]):
+    def _generate_interpreted_qual_drift(species: List[str], qual_ext: Any, inhibited_species: Optional[str]) -> Callable:
         """Fallback interpreted drift function generator."""
         transitions: List[Dict[str, Any]] = []
         import libsbml
@@ -272,23 +272,23 @@ class Topology:
         """Returns a default initial state (all 0.5 for normalized)."""
         return np.full(len(self.species), 0.5)
 
-def drift_model(name: str):
+def drift_model(name: str) -> Callable:
     """
     Decorator to mark a function as a drift model for a Topology.
     """
-    def decorator(fn):
+    def decorator(fn: Callable) -> Callable:
         if type(fn).__name__ != "CPUDispatcher":
             try:
                 from numba import njit
                 fn = njit(fn)
             except ImportError:
                 logger.warning("Numba not installed, drift_model will not be jitted.")
-        fn._drift_model_name = name
+        fn._drift_model_name = name # type: ignore
         return fn
     return decorator
 
 @drift_model("PI3K_AKT_mTOR")
-def pi3k_akt_mtor_drift(state, params, feedback=None):
+def pi3k_akt_mtor_drift(state: np.ndarray, params: np.ndarray, feedback: Optional[np.ndarray] = None) -> np.ndarray:
     if len(state) < 3:
         return np.zeros_like(state)
     pi3k, akt, mtor = state[0], state[1], state[2]
@@ -329,7 +329,7 @@ def pi3k_akt_mtor_drift(state, params, feedback=None):
     return res
 
 @drift_model("Complex_Signaling")
-def complex_signaling_drift(state, params, feedback=None):
+def complex_signaling_drift(state: np.ndarray, params: np.ndarray, feedback: Optional[np.ndarray] = None) -> np.ndarray:
     if len(state) < 4:
         return np.zeros_like(state)
     pi3k, akt, mtor, ampk = state[0], state[1], state[2], state[3]

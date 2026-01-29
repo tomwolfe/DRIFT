@@ -4,6 +4,7 @@ from .binding import BindingEngine
 from .signaling import StochasticIntegrator
 from .metabolic import MetabolicBridge, DFBASolver
 from .engine import SimulationEngine, SimulationResult
+from .core.reproducibility import get_rng
 
 from concurrent.futures import ProcessPoolExecutor
 import multiprocessing as mp
@@ -22,7 +23,7 @@ logger = logging.getLogger(__name__)
 _worker_cache: Dict[tuple[str, str, int], Any] = {}
 
 
-def clear_worker_cache():
+def clear_worker_cache() -> None:
     """Clears the global worker cache. Useful for testing or when models change."""
     _worker_cache.clear()
     logger.info("Worker cache cleared.")
@@ -64,7 +65,7 @@ def _get_bridge_hash(bridge: Optional[MetabolicBridge]) -> int:
         return hash(str(getattr(bridge, "__dict__", "")))
 
 
-def _init_worker(model_or_name, topology=None, bridge=None, model_fingerprint=None):
+def _init_worker(model_or_name: Union[str, Any], topology: Optional[Any] = None, bridge: Optional[MetabolicBridge] = None, model_fingerprint: Optional[str] = None) -> None:
     """Initializes a worker process by loading the model once."""
     try:
         from .topology import get_default_topology
@@ -102,7 +103,7 @@ def _init_worker(model_or_name, topology=None, bridge=None, model_fingerprint=No
         raise
 
 
-def _single_sim_wrapper(args) -> SimulationResult:
+def _single_sim_wrapper(args: tuple) -> SimulationResult:
     """Helper to run a single simulation in a separate process."""
     drug_kd, drug_concentration, steps, model_or_name, topology, bridge, custom_params, sub_steps, refine_feedback, model_fingerprint, seed = args
 
@@ -144,7 +145,8 @@ def _single_sim_wrapper(args) -> SimulationResult:
             integrator=integrator,
             solver=solver,
             bridge=sim_bridge,
-            binding=binding
+            binding=binding,
+            rng=get_rng(seed)
         )
 
         return engine.run(
@@ -167,17 +169,17 @@ class Workbench:
         self, 
         drug_kd: Union[float, Dict[str, float]] = 1.0, 
         drug_concentration: float = 2.0, 
-        model_name="textbook", 
-        topology=None,
-        bridge=None,
-        time_unit="hours",
-        concentration_unit="uM",
-        flux_unit="mmol/gDW/h",
-        sub_steps=5,
-        refine_feedback=False,
-        strict_mapping=False,
+        model_name: str = "textbook", 
+        topology: Optional[Any] = None,
+        bridge: Optional[MetabolicBridge] = None,
+        time_unit: str = "hours",
+        concentration_unit: str = "uM",
+        flux_unit: str = "mmol/gDW/h",
+        sub_steps: int = 5,
+        refine_feedback: bool = False,
+        strict_mapping: bool = False,
         random_state: Optional[int] = None
-    ):
+    ) -> None:
         """
         Initialize the Workbench with specified parameters.
 
@@ -212,16 +214,15 @@ class Workbench:
             )
 
         self.random_state = random_state
-        if random_state is not None:
-            np.random.seed(random_state)
-            random.seed(random_state)
+        self.rng = get_rng(random_state)
 
         self.binding = BindingEngine(targets=drug_kd)
         self.topology = topology
-        self.signaling = StochasticIntegrator(dt=0.1, noise_scale=0.03, topology=topology)
         
         from .topology import get_default_topology
         eff_topology = topology or get_default_topology()
+
+        self.signaling = StochasticIntegrator(dt=0.1, noise_scale=0.03, topology=eff_topology, rng=self.rng)
         
         self.metabolic_bridge = bridge or MetabolicBridge(
             species_names=eff_topology.species,
@@ -230,6 +231,9 @@ class Workbench:
         )
         if self.metabolic_bridge.species_names is None:
             self.metabolic_bridge.species_names = eff_topology.species
+            
+        # Structural Integrity Validation
+        self.metabolic_bridge.validate_topology_sync(eff_topology)
             
         self.solver = DFBASolver(model_name=model_name)
         if self.solver.headless:
@@ -261,7 +265,7 @@ class Workbench:
         self.sub_steps = sub_steps
         self.refine_feedback = refine_feedback
 
-    def get_basal_growth(self, steps=100) -> float:
+    def get_basal_growth(self, steps: int = 100) -> float:
         """Calculates growth rate without any drug inhibition."""
         fingerprint = self.solver.get_fingerprint()
         seed = self.random_state if self.random_state is not None else None
@@ -273,7 +277,7 @@ class Workbench:
             logger.warning("History is not a dictionary with 'growth' key, returning 0.0")
             return 0.0
 
-    def run_simulation(self, steps=100, seed: Optional[int] = None) -> SimulationResult:
+    def run_simulation(self, steps: int = 100, seed: Optional[int] = None) -> SimulationResult:
         """
         Runs a single temporal simulation.
 
@@ -292,7 +296,7 @@ class Workbench:
         args = (self.binding.kd, self.drug_concentration, steps, self.solver.model or self.model_name, self.topology, self.metabolic_bridge, None, self.sub_steps, self.refine_feedback, fingerprint, eff_seed)
         return _single_sim_wrapper(args)
 
-    def _history_to_rows(self, hist, sim_idx):
+    def _history_to_rows(self, hist: SimulationResult, sim_idx: int) -> List[Dict[str, Any]]:
         """Internal helper to convert a history dict to a list of flat rows."""
         rows = []
         from .topology import get_default_topology
@@ -321,7 +325,7 @@ class Workbench:
             rows.append(row)
         return rows
 
-    def run_monte_carlo(self, n_sims=30, steps=100, n_jobs=-1, perturb_params: Optional[List[str]] = None, export_to: Optional[str] = None, return_generator: bool = False) -> Union[Dict[str, Any], Generator[SimulationResult, None, None]]:  # noqa: C901
+    def run_monte_carlo(self, n_sims: int = 30, steps: int = 100, n_jobs: int = -1, perturb_params: Optional[List[str]] = None, export_to: Optional[str] = None, return_generator: bool = False) -> Union[Dict[str, Any], Generator[SimulationResult, None, None]]:  # noqa: C901
         """
         Runs multiple simulations with perturbed parameters in parallel.
 
@@ -370,26 +374,24 @@ class Workbench:
         fingerprint = self.solver.get_fingerprint()
         model_or_name = self.solver.model or self.model_name
 
-        # Master seeding logic
-        master_seed = self.random_state if self.random_state is not None else np.random.randint(0, 2**31)
+        # Master seeding logic using local RNG
+        master_seed = self.random_state if self.random_state is not None else int(self.rng.integers(0, 2**31))
         sim_seeds = [master_seed + i for i in range(n_sims)]
 
         for i in range(n_sims):
-            # Ensure parameter perturbation is also deterministic if random_state is set
-            if self.random_state is not None:
-                np.random.seed(sim_seeds[i])
+            # Per-simulation RNG for parameter perturbation
+            local_sim_rng = get_rng(sim_seeds[i])
 
             if isinstance(base_kd, dict):
-                perturbed_kd = {name: kd * np.random.uniform(0.8, 1.2) for name, kd in base_kd.items()}
+                perturbed_kd = {name: kd * local_sim_rng.uniform(0.8, 1.2) for name, kd in base_kd.items()}
             else:
-                # Should not happen with new BindingEngine but for safety
-                perturbed_kd = float(base_kd) * np.random.uniform(0.8, 1.2)
+                perturbed_kd = float(base_kd) * local_sim_rng.uniform(0.8, 1.2)
 
             custom_params = {}
             if perturb_params:
                 for p_name in perturb_params:
                     if p_name in eff_topology.parameters:
-                        custom_params[p_name] = eff_topology.parameters[p_name] * np.random.uniform(0.8, 1.2)
+                        custom_params[p_name] = eff_topology.parameters[p_name] * local_sim_rng.uniform(0.8, 1.2)
 
             sim_args.append(
                 (perturbed_kd, self.drug_concentration, steps, model_or_name, self.topology, self.metabolic_bridge, custom_params, self.sub_steps, self.refine_feedback, fingerprint, sim_seeds[i])
@@ -397,7 +399,7 @@ class Workbench:
 
         print(f"[*] Starting Monte Carlo Ensemble (N={n_sims}, Workers={n_jobs})...")
 
-        def _gen_results():
+        def _gen_results() -> Generator[SimulationResult, None, None]:
             writer = None
             try:
                 if n_jobs > 1:
@@ -460,7 +462,7 @@ class Workbench:
 
         return {"histories": all_histories, "basal_growth": basal_growth}
 
-    def run_global_sensitivity_analysis(self, n_sims=100, steps=100, n_jobs=-1):
+    def run_global_sensitivity_analysis(self, n_sims: int = 100, steps: int = 100, n_jobs: int = -1) -> Dict[str, Any]:
         """
         Performs Global Sensitivity Analysis (GSA) to identify drivers of metabolic drift.
         Uses both Spearman correlation and Sobol-inspired Variance Decomposition (S1).
@@ -483,7 +485,8 @@ class Workbench:
         if isinstance(results, dict) and "histories" in results:
             histories = results["histories"]
         else:
-            histories = list(results) # Generator
+            # results is a generator
+            histories = list(results) # type: ignore
 
         for h in histories:
             if isinstance(h, dict):
@@ -500,6 +503,7 @@ class Workbench:
                 row.update(h["params"])
                 data.append(row)
         
+        import pandas as pd
         df = pd.DataFrame(data)
         
         # 2. Linear/Monotonic Sensitivity (Spearman)
@@ -557,19 +561,12 @@ class Workbench:
         self, 
         experimental_data_path: str, 
         parameter_name: str = "drug_kd", 
-        param_range: tuple = (0.01, 10.0), 
+        param_range: tuple[float, float] = (0.01, 10.0), 
         n_points: int = 10,
         mapping: Optional[Dict[str, str]] = None
-    ):
+    ) -> tuple[Optional[float], float]:
         """
         Calibrates a specific parameter by minimizing MSE against experimental data.
-        
-        Args:
-            experimental_data_path: Path to experimental CSV.
-            parameter_name: Name of parameter to calibrate (e.g., 'drug_kd').
-            param_range: (min, max) for the parameter.
-            n_points: Number of points to sample in the range (Grid Search).
-            mapping: Mapping from experimental columns to simulation keys.
         """
         from .validation import ExternalValidator
         validator = ExternalValidator(experimental_data_path)
@@ -592,7 +589,6 @@ class Workbench:
                 pass
                 
             # Run simulation
-            # Experimental data often covers long time scales, match steps to data
             if validator.exp_data is not None:
                 max_time = validator.exp_data["time"].max()
                 steps = int(max_time / self.signaling.dt)
@@ -624,7 +620,7 @@ class Workbench:
         
         return best_param, min_total_mse
 
-    def export_results(self, results: Dict[str, Any], file_path: str):
+    def export_results(self, results: Dict[str, Any], file_path: str) -> None:
         """
         Exports Monte Carlo results to a structured Parquet file.
         """
@@ -634,12 +630,13 @@ class Workbench:
         for sim_idx, hist in enumerate(histories):
             all_data.extend(self._history_to_rows(hist, sim_idx))
 
+        import pandas as pd
         df = pd.DataFrame(all_data)
         os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
         df.to_parquet(file_path, index=False)
         logger.info(f"Successfully exported {len(all_data)} rows to {file_path}")
 
-    def export_results_json(self, results: Dict[str, Any], file_path: str):
+    def export_results_json(self, results: Dict[str, Any], file_path: str) -> None:
         """
         Exports results to a JSON format for broader compatibility (SED-ML like structure).
         """

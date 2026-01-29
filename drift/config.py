@@ -32,7 +32,7 @@ class SimulationConfig:
     # Multiprocessing
     n_jobs: int = -1  # Number of parallel jobs (-1 for CPU count)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate configuration parameters."""
         if self.drug_kd <= 0:
             raise ValueError(f"drug_kd must be positive, got {self.drug_kd}")
@@ -59,7 +59,7 @@ class SimulationConfig:
             )
 
     @classmethod
-    def from_dict(cls, config_dict: Dict[str, Any]):
+    def from_dict(cls, config_dict: Dict[str, Any]) -> "SimulationConfig":
         """Create a SimulationConfig from a dictionary."""
         # Filter out keys that aren't in the dataclass
         # We use annotations to get valid fields
@@ -69,7 +69,7 @@ class SimulationConfig:
         })
 
     @classmethod
-    def from_json_file(cls, filepath: str):
+    def from_json_file(cls, filepath: str) -> "SimulationConfig":
         """Load configuration from a JSON file."""
         with open(filepath, "r") as f:
             config_dict = json.load(f)

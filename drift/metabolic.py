@@ -16,12 +16,12 @@ class ScientificRiskWarning(UserWarning):
     pass
 
 
-def sigmoidal_mapping(x, k=10, x0=0.5):
+def sigmoidal_mapping(x: Union[float, np.ndarray], k: float = 10.0, x0: float = 0.5) -> Union[float, np.ndarray]:
     """Sigmoidal mapping function: 1 / (1 + exp(-k * (x - x0)))"""
     return 1 / (1 + np.exp(-k * (x - x0)))
 
 
-def michaelis_menten_mapping(x, km=0.5):
+def michaelis_menten_mapping(x: Union[float, np.ndarray], km: float = 0.5) -> Union[float, np.ndarray]:
     """Michaelis-Menten mapping function: x / (km + x)"""
     # Normalize so that at x=1.0 it returns something close to 1.0 (or at least defined)
     # MM is x/(Km+x). At x=1, it is 1/(Km+1).
@@ -166,7 +166,7 @@ class MetabolicBridge:
         }
         if mappings is None:
             # Default: mTOR increases glucose uptake capacity
-            self.mappings: List[Dict[str, Any]] = [
+            self.mappings = [
                 {
                     "protein_name": "mTOR",
                     "reaction_id": "EX_glc__D_e",
@@ -186,6 +186,31 @@ class MetabolicBridge:
             self.species_names = species_names
         
         self.reverse_mappings = reverse_mappings or []
+        
+    def validate_topology_sync(self, topology: Any) -> bool:
+        """
+        Verifies that every protein_name in self.mappings exists in the provided Topology.species list.
+        
+        Args:
+            topology: The Topology object to check against.
+            
+        Returns:
+            bool: True if all proteins in mappings are present in topology species.
+            
+        Raises:
+            DesyncError: If a mismatch is found.
+        """
+        if not hasattr(topology, "species"):
+            raise ValueError("Provided topology object has no 'species' attribute.")
+            
+        for mapping in self.mappings:
+            protein_name = mapping.get("protein_name")
+            if protein_name and protein_name not in topology.species:
+                raise DesyncError(
+                    f"Structural Integrity Failure: Protein '{protein_name}' in MetabolicBridge mappings "
+                    f"does not exist in Topology species: {topology.species}"
+                )
+        return True
 
     def calibrate(self, reference_fluxes: Dict[str, float]) -> float:
         """
@@ -239,64 +264,68 @@ class MetabolicBridge:
 
         # Validate forward mappings
         for mapping in self.mappings:
-            rxn_id = mapping.get("reaction_id")
-            if rxn_id is None:
+            rxn_id_raw = mapping.get("reaction_id")
+            if rxn_id_raw is None:
                 logger.warning("Mapping has no reaction_id specified.")
                 all_resolved = False
-            elif rxn_id not in model_rxn_ids:
-                if self.strict_mapping:
-                    logger.error(f"STRICT MAPPING FAILURE: Reaction ID '{rxn_id}' not found in model.")
-                    all_resolved = False
-                    continue
-
-                matched = fuzzy_match_reaction_id(rxn_id, model_rxn_ids)
-                if matched:
-                    # Get similarity for logging
-                    similarity = difflib.SequenceMatcher(None, rxn_id.lower(), matched.lower()).ratio()
-                    msg = (
-                        f"Fuzzy matched mapping reaction '{rxn_id}' to '{matched}' "
-                        f"(similarity: {similarity:.2f}). This may lead to misattribution of metabolic effects.")
-                    
-                    if similarity < 0.9:
-                        warnings.warn(msg, ScientificRiskWarning)
-                        logger.warning(f"!!! SCIENTIFIC RISK: {msg} Recommendation: Use explicit reaction IDs.")
-                    else:
-                        logger.info(f"Resolved reaction mapping: {rxn_id} -> {matched} (similarity: {similarity:.2f})")
-                        
-                    mapping["reaction_id"] = matched
-                else:
+            else:
+                rxn_id: str = str(rxn_id_raw)
+                if rxn_id not in model_rxn_ids:
                     if self.strict_mapping:
-                        raise ValueError(f"STRICT MAPPING ERROR: Could not resolve reaction ID '{rxn_id}'")
-                    logger.warning(f"Could not resolve reaction ID '{rxn_id}' in model via exact or fuzzy matching.")
-                    all_resolved = False
+                        logger.error(f"STRICT MAPPING FAILURE: Reaction ID '{rxn_id}' not found in model.")
+                        all_resolved = False
+                        continue
+
+                    matched = fuzzy_match_reaction_id(rxn_id, model_rxn_ids)
+                    if matched:
+                        # Get similarity for logging
+                        similarity = difflib.SequenceMatcher(None, rxn_id.lower(), matched.lower()).ratio()
+                        msg = (
+                            f"Fuzzy matched mapping reaction '{rxn_id}' to '{matched}' "
+                            f"(similarity: {similarity:.2f}). This may lead to misattribution of metabolic effects.")
+                        
+                        if similarity < 0.9:
+                            warnings.warn(msg, ScientificRiskWarning)
+                            logger.warning(f"!!! SCIENTIFIC RISK: {msg} Recommendation: Use explicit reaction IDs.")
+                        else:
+                            logger.info(f"Resolved reaction mapping: {rxn_id} -> {matched} (similarity: {similarity:.2f})")
+                            
+                        mapping["reaction_id"] = matched
+                    else:
+                        if self.strict_mapping:
+                            raise ValueError(f"STRICT MAPPING ERROR: Could not resolve reaction ID '{rxn_id}'")
+                        logger.warning(f"Could not resolve reaction ID '{rxn_id}' in model via exact or fuzzy matching.")
+                        all_resolved = False
                     
         # Validate reverse mappings
         for rev_map in self.reverse_mappings:
-            flux_id = rev_map.get("flux_id")
-            if flux_id is None:
+            flux_id_raw = rev_map.get("flux_id")
+            if flux_id_raw is None:
                 logger.warning("Reverse mapping has no flux_id specified.")
                 all_resolved = False
-            elif flux_id not in model_rxn_ids and flux_id not in self.probes:
-                if self.strict_mapping:
-                    logger.error(f"STRICT MAPPING FAILURE: Reverse flux/probe ID '{flux_id}' not found.")
-                    all_resolved = False
-                    continue
-
-                matched = fuzzy_match_reaction_id(flux_id, model_rxn_ids)
-                if matched:
-                    similarity = difflib.SequenceMatcher(None, flux_id.lower(), matched.lower()).ratio()
-                    msg = f"Fuzzy matched reverse mapping flux '{flux_id}' to '{matched}' (similarity: {similarity:.2f})."
-                    if similarity < 0.9:
-                        warnings.warn(msg, ScientificRiskWarning)
-                        logger.warning(f"!!! SCIENTIFIC RISK: {msg}")
-                    else:
-                        logger.info(f"Resolved reverse mapping: {flux_id} -> {matched}")
-                    rev_map["flux_id"] = matched
-                else:
+            else:
+                flux_id: str = str(flux_id_raw)
+                if flux_id not in model_rxn_ids and flux_id not in self.probes:
                     if self.strict_mapping:
-                        raise ValueError(f"STRICT MAPPING ERROR: Could not resolve reverse flux ID '{flux_id}'")
-                    logger.warning(f"Could not resolve reverse mapping flux ID '{flux_id}' in model.")
-                    all_resolved = False
+                        logger.error(f"STRICT MAPPING FAILURE: Reverse flux/probe ID '{flux_id}' not found.")
+                        all_resolved = False
+                        continue
+
+                    matched = fuzzy_match_reaction_id(flux_id, model_rxn_ids)
+                    if matched:
+                        similarity = difflib.SequenceMatcher(None, flux_id.lower(), matched.lower()).ratio()
+                        msg = f"Fuzzy matched reverse mapping flux '{flux_id}' to '{matched}' (similarity: {similarity:.2f})."
+                        if similarity < 0.9:
+                            warnings.warn(msg, ScientificRiskWarning)
+                            logger.warning(f"!!! SCIENTIFIC RISK: {msg}")
+                        else:
+                            logger.info(f"Resolved reverse mapping: {flux_id} -> {matched}")
+                        rev_map["flux_id"] = matched
+                    else:
+                        if self.strict_mapping:
+                            raise ValueError(f"STRICT MAPPING ERROR: Could not resolve reverse flux ID '{flux_id}'")
+                        logger.warning(f"Could not resolve reverse mapping flux ID '{flux_id}' in model.")
+                        all_resolved = False
                     
         return all_resolved
 
@@ -411,12 +440,12 @@ class MetabolicBridge:
         state_len = len(signaling_state)
 
         for map_config in self.mappings:
-            idx = map_config.get("protein_idx")
-            name = map_config.get("protein_name")
-            rxn_id: str = map_config["reaction_id"]
-            base_vmax: float = map_config.get("base_vmax", 10.0)
-            influence: str = map_config.get("influence", "positive")
-            mapping_fn = map_config.get("mapping_fn")
+            idx: Optional[int] = map_config.get("protein_idx") # type: ignore
+            name: Optional[str] = map_config.get("protein_name") # type: ignore
+            rxn_id: str = map_config["reaction_id"] # type: ignore
+            base_vmax: float = map_config.get("base_vmax", 10.0) # type: ignore
+            influence: str = map_config.get("influence", "positive") # type: ignore
+            mapping_fn: Optional[Callable] = map_config.get("mapping_fn") # type: ignore
 
             if name is not None and self.species_names is not None and name in self.species_names:
                 idx = self.species_names.index(name)
@@ -428,10 +457,10 @@ class MetabolicBridge:
             protein_level = max(0.0, min(1.0, protein_level))
 
             if mapping_fn is not None:
-                scaling = mapping_fn(protein_level)
+                scaling = float(mapping_fn(protein_level))
             else:
-                basal = map_config.get("basal_scaling", 0.1)
-                max_s = map_config.get("max_scaling", 0.9)
+                basal: float = map_config.get("basal_scaling", 0.1) # type: ignore
+                max_s: float = map_config.get("max_scaling", 0.9) # type: ignore
                 
                 if influence == "positive":
                     scaling = basal + max_s * protein_level
@@ -474,18 +503,18 @@ class MetabolicBridge:
         constraints: Dict[str, float] = {}
 
         for map_config in self.mappings:
-            name = map_config.get("protein_name")
-            rxn_id: str = map_config["reaction_id"]
-            base_vmax: float = map_config.get("base_vmax", 10.0)
-            influence: str = map_config.get("influence", "positive")
-            mapping_fn = map_config.get("mapping_fn")
+            name: Optional[str] = map_config.get("protein_name") # type: ignore
+            rxn_id: str = map_config["reaction_id"] # type: ignore
+            base_vmax: float = map_config.get("base_vmax", 10.0) # type: ignore
+            influence: str = map_config.get("influence", "positive") # type: ignore
+            mapping_fn: Optional[Callable] = map_config.get("mapping_fn") # type: ignore
 
             try:
                 if name is not None:
                     protein_level = float(state_map[name])
                 else:
                     # Fallback to index if name is missing in mapping configuration
-                    idx = map_config.get("protein_idx")
+                    idx: Optional[int] = map_config.get("protein_idx") # type: ignore
                     if idx is not None and 0 <= idx < len(signaling_state):
                         protein_level = float(signaling_state[idx])
                     else:
@@ -501,11 +530,11 @@ class MetabolicBridge:
 
             if mapping_fn is not None:
                 # Use custom mapping function
-                scaling = mapping_fn(protein_level)
+                scaling = float(mapping_fn(protein_level))
             else:
                 # Configuration-based scaling
-                basal = map_config.get("basal_scaling", 0.1)
-                max_s = map_config.get("max_scaling", 0.9)
+                basal: float = map_config.get("basal_scaling", 0.1) # type: ignore
+                max_s: float = map_config.get("max_scaling", 0.9) # type: ignore
                 
                 if influence == "positive":
                     scaling = basal + max_s * protein_level
@@ -521,9 +550,9 @@ class MetabolicBridge:
 class BridgeBuilder:
     """Fluent API for building MetabolicBridge instances."""
 
-    def __init__(self):
-        self.mappings = []
-        self.reverse_mappings = []
+    def __init__(self) -> None:
+        self.mappings: List[Dict[str, Any]] = []
+        self.reverse_mappings: List[Dict[str, Any]] = []
         self.species_names: Optional[List[str]] = None
         self.strict_mapping = False
         self.flux_unit = "mmol/gDW/h"
@@ -626,7 +655,7 @@ class BridgeBuilder:
 class DFBASolver:
     """Dynamic Flux Balance Analysis solver."""
 
-    def __init__(self, model_name="textbook", strict=False, model=None):
+    def __init__(self, model_name: str = "textbook", strict: bool = False, model: Optional[Any] = None) -> None:
         """
         Initialize the DFBASolver.
 
@@ -665,17 +694,19 @@ class DFBASolver:
             return
 
         self.model = model if model is not None else self._load_model_safe(model_name)
-        self._rxn_cache = {} # Cache for reaction objects to speed up optimize
+        self._rxn_cache: Dict[str, Any] = {} # Cache for reaction objects to speed up optimize
         
         # Pareto: Immediate validation to ensure the model is actually usable.
         if self.model:
             self.validate_model()
 
-    def _solve_proxy(self, constraints, scalings=None):
+    def _solve_proxy(self, constraints: Dict[str, float], scalings: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
         """
         Algebraic proxy for FBA when no solver is available.
         Mimics growth based on the most limiting uptake constraint and stoichiometric realism.
         """
+        BASAL_PROXY_REFERENCE = 0.211
+
         if scalings:
             # The most restrictive reaction is the one with the lowest scaling factor
             # (which represents Vmax / base_vmax)
@@ -701,6 +732,16 @@ class DFBASolver:
                 
                 min_uptake = min(effective_uptakes)
                 growth = (min_uptake / 10.0) * self.proxy_params["base_growth"]
+
+        # Structural integrity check (Proxy Hardening)
+        # 1. Hard bounds check
+        if growth > 1.0 or growth < 0.0:
+            raise SolverError(f"Proxy growth calculation out of physical bounds: {growth:.4f}")
+
+        # 2. Qualitative baseline check (within 20% of textbook curve)
+        deviation = abs(growth - BASAL_PROXY_REFERENCE) / BASAL_PROXY_REFERENCE
+        if deviation > 0.20:
+            logger.warning(f"Headless Proxy Drift: Growth ({growth:.4f}) deviates >20% from BASAL_PROXY_REFERENCE ({BASAL_PROXY_REFERENCE})")
 
         # Simulate some basic fluxes for feedback
         fluxes = {k: -lb for k, lb in constraints.items()}
@@ -747,7 +788,7 @@ class DFBASolver:
         import hashlib
         return hashlib.sha256(str(model_state).encode()).hexdigest()
 
-    def validate_model(self):
+    def validate_model(self) -> None:
         """
         Performs a pre-flight check to ensure the model is viable for DRIFT.
         Checks for solvers, objectives, and basic growth capability.
@@ -773,7 +814,7 @@ class DFBASolver:
 
         logger.info(f"[+] Model '{self.model_name}' validated successfully.")
 
-    def _check_solver(self):
+    def _check_solver(self) -> List[str]:
         """Checks if a valid COBRA solver is available and returns a list of them."""
         try:
             from optlang import available_solvers
@@ -795,7 +836,7 @@ class DFBASolver:
             logger.warning("Could not check for available solvers via optlang. FBA might fail.")
             return []
 
-    def check_solver_sensitivity(self):
+    def check_solver_sensitivity(self) -> Dict[str, Any]:
         """
         Runs the current model with all available solvers and compares results.
         This is critical for ensuring reproducibility across different environments.
@@ -856,7 +897,7 @@ class DFBASolver:
         
         return results
 
-    def _load_model_safe(self, name):
+    def _load_model_safe(self, name: str) -> Any:
         """
         Safely load a metabolic model with fallback options.
         """
@@ -897,7 +938,7 @@ class DFBASolver:
             logger.critical(error_msg)
             raise RuntimeError(error_msg) from e
 
-    def optimize(self, constraints, scalings=None):
+    def optimize(self, constraints: Dict[str, float], scalings: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
         """
         Solves FBA with specific constraints and provides diagnostics on failure.
         """
@@ -972,6 +1013,6 @@ class DFBASolver:
                 "error_fingerprint": error_fingerprint
             }
 
-    def solve_step(self, constraints, scalings=None):
+    def solve_step(self, constraints: Dict[str, float], scalings: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
         """Backward compatibility alias for optimize."""
         return self.optimize(constraints, scalings=scalings)

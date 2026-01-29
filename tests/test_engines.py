@@ -97,16 +97,18 @@ class TestMetabolic(unittest.TestCase):
 
     def test_bridge_invalid_signaling_state(self):
         """Test that invalid signaling states are handled."""
+        from drift.core.exceptions import DesyncError
         bridge = MetabolicBridge()
-        # Should NOT raise ValueError for length 2 anymore, just warns
-        constraints = bridge.get_constraints([0.5, 0.5])
-        self.assertEqual(len(constraints), 0)
+        # Should now raise DesyncError due to hardening
+        with self.assertRaises(DesyncError):
+            bridge.get_constraints([0.5, 0.5])
         
         with self.assertRaises(ValueError):
             bridge.get_constraints("invalid")  # Wrong type
 
     def test_bridge_invalid_protein_index(self):
         """Test that invalid protein indices are handled."""
+        from drift.core.exceptions import DesyncError
         bridge = MetabolicBridge(
             mappings=[
                 {
@@ -117,10 +119,9 @@ class TestMetabolic(unittest.TestCase):
                 }
             ]
         )
-        # Should handle invalid index gracefully
-        constraints = bridge.get_constraints([0.5, 0.5, 0.5])
-        # Since index 5 is invalid, no constraints should be added
-        self.assertEqual(len(constraints), 0)
+        # Should raise DesyncError because species_names is missing or index out of range
+        with self.assertRaises(DesyncError):
+            bridge.get_constraints([0.5, 0.5, 0.5])
 
     def test_solver_fallback(self):
         # This might take a moment to download/load models

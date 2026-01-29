@@ -1,30 +1,37 @@
 import numpy as np
 from numba import njit
 import logging
-
+from typing import Optional, Union, Dict, Any, List, Callable
 
 from .topology import Topology, get_default_topology
+from .core.reproducibility import get_rng
 
 logger = logging.getLogger(__name__)
 
 
 @njit
-def seed_numba(seed):
+def seed_numba(seed: int) -> None:
     """Sets the seed for Numba's random number generator."""
     np.random.seed(seed)
 
 
 @njit
-def langevin_step_generic(state, dt, params, noise_scale, drift_fn, feedback=None):
+def langevin_step_generic(state: np.ndarray, dt: float, params: np.ndarray, noise_scale: float, noise_vec: Optional[np.ndarray] = None, drift_fn: Optional[Callable] = None, feedback: Optional[np.ndarray] = None) -> Any:
     """
     One step of SDE integration using the Milstein scheme for better stability.
     Uses state-dependent noise to ensure biological plausibility near [0, 1] boundaries.
-    Accepts an arbitrary jitted drift_fn.
+    Accepts an arbitrary jitted drift_fn and optional pre-generated noise.
     """
+    if drift_fn is None:
+         return state # Should not happen
+
     drift = drift_fn(state, params, feedback=feedback)
 
-    # Random term
-    dw = np.random.normal(0, 1.0, size=len(state)) * np.sqrt(dt)
+    # Random term (pre-generated for thread-safe reproducibility, or fallback)
+    if noise_vec is not None:
+        dw = noise_vec * np.sqrt(dt)
+    else:
+        dw = np.random.normal(0, 1.0, size=len(state)) * np.sqrt(dt)
 
     # State-dependent noise: b(x) = noise_scale * sqrt(x * (1-x))
     eps = 1e-6
@@ -49,14 +56,13 @@ def langevin_step_generic(state, dt, params, noise_scale, drift_fn, feedback=Non
 
 
 @njit
-def langevin_step(state, dt, params, noise_scale, feedback=None):
+def langevin_step(state: np.ndarray, dt: float, params: np.ndarray, noise_scale: float, noise_vec: Optional[np.ndarray] = None, feedback: Optional[np.ndarray] = None) -> Any:
     """
     One step of SDE integration using the Milstein scheme for better stability.
-    Uses state-dependent noise to ensure biological plausibility near [0, 1] boundaries.
-    This is a simplified version that uses the default PI3K_AKT_mTOR drift function.
+    Uses optional pre-generated noise_vec for local RNG control.
     """
     # Default PI3K_AKT_mTOR drift function
-    def default_drift_fn(state, params, feedback=None):
+    def default_drift_fn(state: np.ndarray, params: np.ndarray, feedback: Optional[np.ndarray] = None) -> np.ndarray:
         # Extract parameters for PI3K-AKT-mTOR pathway
         # params[0:3] are degradation rates, params[3:6] are production rates, params[6] is feedback
         k_deg = params[0:3]  # degradation rates for PI3K, AKT, mTOR
@@ -69,12 +75,15 @@ def langevin_step(state, dt, params, noise_scale, feedback=None):
         # Simple linearized model for PI3K-AKT-mTOR pathway
         # dx/dt = k_prod * (1-x) - k_deg * x
         drift = k_prod * (1.0 - state) - k_deg * state
-        return drift
+        return drift # type: ignore
 
     drift = default_drift_fn(state, params, feedback=feedback)
 
     # Random term
-    dw = np.random.normal(0, 1.0, size=len(state)) * np.sqrt(dt)
+    if noise_vec is not None:
+        dw = noise_vec * np.sqrt(dt)
+    else:
+        dw = np.random.normal(0, 1.0, size=len(state)) * np.sqrt(dt)
 
     # State-dependent noise: b(x) = noise_scale * sqrt(x * (1-x))
     eps = 1e-6
@@ -98,16 +107,19 @@ def langevin_step(state, dt, params, noise_scale, feedback=None):
     return new_state
 
 
-def create_langevin_integrator(drift_fn):
+def create_langevin_integrator(drift_fn: Callable) -> Callable:
     """
     Higher-order function that creates a jitted Milstein integrator step 
     from a jitted drift function.
     """
     @njit
-    def custom_milstein_step(state, dt, params, noise_scale, feedback=None):
+    def custom_milstein_step(state: np.ndarray, dt: float, params: np.ndarray, noise_scale: float, noise_vec: Optional[np.ndarray] = None, feedback: Optional[np.ndarray] = None) -> Any:
         drift = drift_fn(state, params, feedback=feedback)
         
-        dw = np.random.normal(0, 1.0, size=len(state)) * np.sqrt(dt)
+        if noise_vec is not None:
+            dw = noise_vec * np.sqrt(dt)
+        else:
+            dw = np.random.normal(0, 1.0, size=len(state)) * np.sqrt(dt)
         
         eps = 1e-6
         clamped_state = np.zeros_like(state)
@@ -129,13 +141,13 @@ def create_langevin_integrator(drift_fn):
 
         return new_state
         
-    return custom_milstein_step
+    return custom_milstein_step # type: ignore
 
 
 class StochasticIntegrator:
     """Integrator for stochastic differential equations in signaling pathways."""
 
-    def __init__(self, dt=0.1, noise_scale=0.02, topology=None):
+    def __init__(self, dt: float = 0.1, noise_scale: float = 0.02, topology: Optional[Topology] = None, rng: Optional[np.random.Generator] = None):
         """
         Initialize the StochasticIntegrator.
 
@@ -143,6 +155,7 @@ class StochasticIntegrator:
             dt (float): Time step for integration
             noise_scale (float): Scale of the noise term
             topology (Topology, optional): Signaling network topology
+            rng (np.random.Generator, optional): Local random number generator
         """
         if dt <= 0:
             raise ValueError(f"dt must be positive, got {dt}")
@@ -152,12 +165,12 @@ class StochasticIntegrator:
         self.dt = dt
         self.noise_scale = noise_scale
         self.topology = topology or get_default_topology()
+        self.rng = rng or get_rng()
         
         # Default kinetic parameters
         self.base_params = np.array(list(self.topology.parameters.values()))
         
         # Performance optimization: Auto-jit custom topologies if a jitted drift is provided
-        # This addresses the 'performance cliff' for custom topologies identified in audit.
         if self.topology.jitted_step_fn is None and self.topology.drift_fn is not None:
             # Check if it's already jitted (Numba CPUDispatcher) or marked by decorator
             is_jitted = type(self.topology.drift_fn).__name__ == "CPUDispatcher"
@@ -173,13 +186,13 @@ class StochasticIntegrator:
         # Stability check
         self._check_stability()
 
-    def set_seed(self, seed: int):
+    def set_seed(self, seed: int) -> None:
         """Sets the seed for the integrator (including Numba jitted functions)."""
-        np.random.seed(seed)
+        self.rng = get_rng(seed)
         seed_numba(seed)
         logger.debug(f"Integrator seed set to {seed}")
 
-    def _check_stability(self):
+    def _check_stability(self) -> None:
         """
         Heuristic stability check for the Milstein scheme.
         Warns if dt is too large relative to noise_scale or absolute time-step.
@@ -195,8 +208,6 @@ class StochasticIntegrator:
             )
             
         # 2. Noise-driven stability check
-        # For Milstein on [0, 1] bounded systems, noise_scale * sqrt(dt) 
-        # should ideally be small enough to avoid frequent boundary hitting.
         noise_impact = self.noise_scale * np.sqrt(self.dt)
         if noise_impact > 0.1:
             warnings.warn(
@@ -205,7 +216,7 @@ class StochasticIntegrator:
                 RuntimeWarning
             )
 
-    def step(self, state, inhibition, feedback=None):
+    def step(self, state: np.ndarray, inhibition: Union[float, Dict[str, float], np.ndarray], feedback: Optional[Union[float, np.ndarray]] = None) -> Any:
         """
         Perform one integration step with optional metabolic feedback.
         """
@@ -245,7 +256,6 @@ class StochasticIntegrator:
         if np.any((inhibition_vec < 0) | (inhibition_vec > 1)):
             raise ValueError("All inhibition values must be between 0 and 1")
         
-        
         if feedback is None:
             feedback = np.ones(len(self.topology.species))
         elif isinstance(feedback, (float, int)):
@@ -253,42 +263,42 @@ class StochasticIntegrator:
             val = float(feedback)
             feedback = np.ones(len(self.topology.species)) * val
 
+        # Pre-generate noise for thread-safety and reproducibility
+        noise_vec = self.rng.standard_normal(len(state))
+
         # Performance optimization: if using jitted topology, use it
         if self.topology.jitted_step_fn is not None:
-            # We assume the jitted_step_fn has signature (state, dt, params, noise_scale, feedback)
-            # The params usually expected by jitted functions include inhibition as the LAST element.
-            # For multi-target, we append the WHOLE inhibition vector.
+            # We assume the jitted_step_fn has signature (state, dt, params, noise_scale, noise_vec, feedback)
             params = np.concatenate((self.base_params, inhibition_vec))
-            return self.topology.jitted_step_fn(state, self.dt, params, self.noise_scale, feedback)
+            return self.topology.jitted_step_fn(state, self.dt, params, self.noise_scale, noise_vec, feedback)
 
         # Custom topology with provided drift_fn (non-jitted fallback)
         if self.topology.drift_fn is not None:
-            return self._custom_step(state, inhibition_vec, feedback=feedback)
+            return self._custom_step(state, inhibition, noise_vec, feedback=feedback)
 
         # Fallback to generic decay
-        return self._generic_step(state, inhibition_vec, feedback=feedback)
+        return self._generic_step(state, inhibition_vec, noise_vec, feedback=feedback)
 
-    def _custom_step(self, state, inhibition, feedback=None):
+    def _custom_step(self, state: np.ndarray, inhibition: Any, noise_vec: np.ndarray, feedback: Optional[np.ndarray] = None) -> Any:
         """Step using a custom drift function provided in the topology."""
         if self.topology.drift_fn is None:
             # Fallback if drift_fn is None
-            return self._generic_step(state, inhibition, feedback=feedback)
+            return self._generic_step(state, inhibition, noise_vec, feedback=feedback)
 
         if feedback is None:
             feedback = np.ones(len(state))
 
         # Custom drift functions should now ideally accept feedback as well
-        # We try to pass it if possible, otherwise we ignore it for backward compatibility
         try:
             drift = self.topology.drift_fn(state, self.topology.parameters, inhibition, feedback=feedback)
         except TypeError:
             drift = self.topology.drift_fn(state, self.topology.parameters, inhibition)
 
-        diffusion = np.random.normal(0, self.noise_scale, size=len(state)) * np.sqrt(self.dt)
+        diffusion = noise_vec * self.noise_scale * np.sqrt(self.dt)
         new_state = state + drift * self.dt + diffusion
         return np.clip(new_state, 0, 1)
 
-    def _generic_step(self, state, inhibition, feedback=None):
+    def _generic_step(self, state: np.ndarray, inhibition: np.ndarray, noise_vec: np.ndarray, feedback: Optional[np.ndarray] = None) -> Any:
         """Generic Euler-Maruyama step for unknown topologies."""
         if feedback is None:
             feedback = np.ones(len(state))
@@ -301,13 +311,11 @@ class StochasticIntegrator:
         inhibited_species = getattr(self.topology, "inhibited_species", None)
         if inhibited_species and inhibited_species in self.topology.species:
             idx = self.topology.species.index(inhibited_species)
-            # Reduce the "activity" (clamped level) of the target species
             state_with_inhibition = state.copy()
-            state_with_inhibition[idx] *= (1.0 - inhibition)
-            # Recalculate drift with inhibition if we had a more complex generic model
-            # For now, just apply it to the state used in the next step
+            state_with_inhibition[idx] *= (1.0 - inhibition[idx])
             state = state_with_inhibition
 
-        diffusion = np.random.normal(0, self.noise_scale, size=len(state)) * np.sqrt(self.dt)
+        diffusion = noise_vec * self.noise_scale * np.sqrt(self.dt)
         new_state = state + drift * self.dt + diffusion
         return np.clip(new_state, 0, 1)
+
