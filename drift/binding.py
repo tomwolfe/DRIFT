@@ -31,6 +31,8 @@ class BindingEngine:
             self.targets = {"default": float(eff_targets)}
             self.kd = float(eff_targets) # Backward compatibility
         else:
+            if not eff_targets:  # Check if dictionary is empty
+                raise ValueError("targets dictionary cannot be empty")
             for name, val in eff_targets.items():
                 if val <= 0:
                     raise ValueError(f"kd for {name} must be positive, got {val}")

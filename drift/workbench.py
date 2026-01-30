@@ -640,13 +640,17 @@ class Workbench:
         """
         Exports results to a JSON format for broader compatibility (SED-ML like structure).
         """
+        # Determine solver status based on whether we're running in headless mode
+        solver_status = "headless" if self.solver.headless else "standard"
+
         export_data: Dict[str, Any] = {
             "metadata": {
                 "model_name": self.model_name,
                 "time_unit": self.time_unit,
                 "concentration_unit": self.concentration_unit,
                 "basal_growth": results.get("basal_growth"),
-                "drug_concentration": self.drug_concentration
+                "drug_concentration": self.drug_concentration,
+                "solver_status": solver_status
             },
             "simulations": []
         }

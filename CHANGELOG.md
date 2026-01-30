@@ -2,6 +2,18 @@
 
 All notable changes to the DRIFT project will be documented in this file.
 
+## [0.2.0] - 2026-01-30
+
+### Added
+- Harden polypharmacology validation with strict input validation
+- Parallel reproducibility fixes for bit-perfect Monte Carlo simulations
+- Explicit 'solver_status' field to exported JSON results
+
+### Changed
+- Enhanced BindingEngine to enforce strict validation of targets dictionary
+- Fixed seed propagation to Numba-jitted functions in worker processes
+- Improved export metadata with solver status information
+
 ## [0.1.1] - 2026-01-18
 
 ### Added
