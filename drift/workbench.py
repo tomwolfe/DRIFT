@@ -70,7 +70,7 @@ def _init_worker(model_or_name: Union[str, Any], topology: Optional[Any] = None,
     try:
         from .topology import get_default_topology
         eff_topology = topology or get_default_topology()
-        
+
         # If fingerprint not provided, try to get it
         if model_fingerprint is None:
             if isinstance(model_or_name, str):
@@ -85,16 +85,19 @@ def _init_worker(model_or_name: Union[str, Any], topology: Optional[Any] = None,
         # Create a unique key for this configuration
         bridge_hash = _get_bridge_hash(bridge)
         cache_key = (model_fingerprint, eff_topology.name, bridge_hash)
-        
+
         if cache_key not in _worker_cache:
             if isinstance(model_or_name, str):
                 solver = DFBASolver(model_name=model_or_name)
             else:
                 solver = DFBASolver(model=model_or_name)
 
+            # Initialize integrator with default RNG (will be overridden in _single_sim_wrapper)
+            integrator = StochasticIntegrator(dt=0.1, noise_scale=0.03, topology=eff_topology)
+
             _worker_cache[cache_key] = {
                 "solver": solver,
-                "integrator": StochasticIntegrator(dt=0.1, noise_scale=0.03, topology=eff_topology),
+                "integrator": integrator,
                 "bridge": bridge or MetabolicBridge(species_names=eff_topology.species)
             }
             logger.info(f"Worker {os.getpid()} initialized with model fingerprint: {model_fingerprint[:8]}..., topology: {eff_topology.name}")
@@ -111,7 +114,7 @@ def _single_sim_wrapper(args: tuple) -> SimulationResult:
         from .topology import get_default_topology
         eff_topology = topology or get_default_topology()
         bridge_hash = _get_bridge_hash(bridge)
-        
+
         # If fingerprint not provided, we have to calculate it (expensive in worker)
         if model_fingerprint is None:
              if isinstance(model_or_name, str):
@@ -135,18 +138,29 @@ def _single_sim_wrapper(args: tuple) -> SimulationResult:
             binding = BindingEngine(targets=drug_kd)
             integrator = StochasticIntegrator(dt=0.1, noise_scale=0.03, topology=eff_topology)
             sim_bridge = bridge or MetabolicBridge(species_names=eff_topology.species)
-            
+
             if isinstance(model_or_name, str):
                 solver = DFBASolver(model_name=model_or_name)
             else:
                 solver = DFBASolver(model=model_or_name)
+
+        # Ensure proper random state propagation across all components
+        rng = get_rng(seed)
+
+        # Propagate RNG to integrator
+        integrator.rng = rng
+
+        # Also seed Numba for this seed in the worker process
+        from .signaling import seed_numba
+        if seed is not None:
+            seed_numba(seed)
 
         engine = SimulationEngine(
             integrator=integrator,
             solver=solver,
             bridge=sim_bridge,
             binding=binding,
-            rng=get_rng(seed)
+            rng=rng
         )
 
         return engine.run(

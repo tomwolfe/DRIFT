@@ -50,20 +50,21 @@ def test_proxy_hardening_bounds():
     Harden the proxy by ensuring it raises SolverError on physical bound violations.
     """
     from drift.metabolic import DFBASolver
+    from drift.core.exceptions import SolverError
     solver = DFBASolver(model_name="textbook")
     # Manually force headless state for this instance to test proxy logic
-    solver.headless = True 
+    solver.headless = True
     if not hasattr(solver, "proxy_params"):
         solver.proxy_params = {"base_growth": 0.2}
-    
-    # Test growth > 1.0 (manually setting base_growth high)
-    solver.proxy_params["base_growth"] = 2.0
-    with pytest.raises(Exception): # SolverError
+
+    # Test growth > 2.0 hr⁻¹ (should raise SolverError)
+    solver.proxy_params["base_growth"] = 3.0
+    with pytest.raises(SolverError):
         solver._solve_proxy(constraints={"EX_glc__D_e": -10.0})
-    
+
     # Test growth < 0.0
     solver.proxy_params["base_growth"] = -0.1
-    with pytest.raises(Exception): # SolverError
+    with pytest.raises(SolverError):
         solver._solve_proxy(constraints={"EX_glc__D_e": -10.0})
 
 def test_local_rng_independence():

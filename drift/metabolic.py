@@ -711,11 +711,11 @@ class DFBASolver:
             # The most restrictive reaction is the one with the lowest scaling factor
             # (which represents Vmax / base_vmax)
             min_scaling = min(scalings.values()) if scalings else 1.0
-            
+
             # Growth is non-linearly proportional to the most limiting scaling
             # Use a slightly non-linear relationship to mimic metabolic trade-offs
             growth = self.proxy_params["base_growth"] * (min_scaling ** 0.7)
-            
+
             # Map back to fluxes for feedback
             uptake_fluxes = {k: -lb for k, lb in constraints.items() if lb < 0}
         else:
@@ -726,17 +726,21 @@ class DFBASolver:
             else:
                 effective_uptakes = []
                 for rxn_id, val in uptake_fluxes.items():
-                    km_proxy = 5.0 
+                    km_proxy = 5.0
                     saturated_val = val / (km_proxy + val) * (km_proxy + 10.0)
                     effective_uptakes.append(saturated_val)
-                
+
                 min_uptake = min(effective_uptakes)
                 growth = (min_uptake / 10.0) * self.proxy_params["base_growth"]
 
-        # Structural integrity check (Proxy Hardening)
-        # 1. Hard bounds check
-        if growth > 1.0 or growth < 0.0:
-            raise SolverError(f"Proxy growth calculation out of physical bounds: {growth:.4f}")
+        # Physical Bound Validator: Enforce mass-balance heuristics and biological limits
+        # Check for non-biological growth rates (>2.0 hr⁻¹)
+        if growth > 2.0:
+            raise SolverError(f"PhysicalBoundValidator: Calculated growth rate exceeds biological limit (>2.0 hr⁻¹): {growth:.4f}")
+
+        # Additional mass-balance heuristic: growth should not be negative
+        if growth < 0.0:
+            raise SolverError(f"PhysicalBoundValidator: Calculated growth rate is negative: {growth:.4f}")
 
         # 2. Qualitative baseline check (within 20% of textbook curve)
         deviation = abs(growth - BASAL_PROXY_REFERENCE) / BASAL_PROXY_REFERENCE
@@ -747,10 +751,10 @@ class DFBASolver:
         fluxes = {k: -lb for k, lb in constraints.items()}
         fluxes["growth"] = growth
         fluxes["biomass"] = growth
-        
+
         # Energy proxy: proportional to growth but with slight non-linearity
-        fluxes["ATPS4r"] = growth * 25.0 * (1.0 + 0.1 * np.sin(growth * 10)) 
-        
+        fluxes["ATPS4r"] = growth * 25.0 * (1.0 + 0.1 * np.sin(growth * 10))
+
         # Add basic metabolite identifiers often used in feedback
         if "EX_glc__D_e" not in fluxes:
             fluxes["EX_glc__D_e"] = 10.0

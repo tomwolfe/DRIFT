@@ -5,6 +5,7 @@ from .binding import BindingEngine
 from .signaling import StochasticIntegrator
 from .metabolic import MetabolicBridge, DFBASolver
 from .core.reproducibility import get_rng
+from .core.audit import SimulationAuditLog
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,7 @@ class SimulationResult(TypedDict):
     params: Dict[str, float]
     headless: bool
     species_names: List[str]
+    audit_log: List[Dict[str, Any]]
 
 class SimulationEngine:
     """
@@ -42,7 +44,7 @@ class SimulationEngine:
         self.bridge = bridge
         self.binding = binding
         self.rng = rng or get_rng()
-        
+
         # Sync RNG with integrator
         self.integrator.rng = self.rng
 
@@ -72,7 +74,7 @@ class SimulationEngine:
                     self.integrator.base_params[i] = custom_params[p_name]
 
         inhibition = self.binding.calculate_inhibition(drug_concentration)
-        
+
         # Calculate a representative inhibition for logging/history
         if isinstance(inhibition, dict):
             primary_inhibition = max(inhibition.values()) if inhibition else 0.0
@@ -92,9 +94,13 @@ class SimulationEngine:
         else:
             hist_kd = self.binding.targets
 
+        # Initialize audit log
+        from .core.audit import SimulationAuditLog
+        audit_log = SimulationAuditLog()
+
         history: SimulationResult = {
             "time": np.arange(steps) * self.integrator.dt,
-            "signaling": np.zeros((steps, len(self.integrator.topology.species))), 
+            "signaling": np.zeros((steps, len(self.integrator.topology.species))),
             "growth": np.zeros(steps),
             "status": [],
             "cell_death": False,
@@ -104,7 +110,8 @@ class SimulationEngine:
             "drug_kd": hist_kd,
             "params": custom_params or {},
             "headless": self.solver.headless,
-            "species_names": self.integrator.topology.species
+            "species_names": self.integrator.topology.species,
+            "audit_log": []  # Initialize empty audit log
         }
 
         signaling_hist = []
@@ -129,19 +136,23 @@ class SimulationEngine:
                 self.integrator.dt = dt_small
                 state = self.integrator.step(state, inhibition, feedback=feedback)
                 self.integrator.dt = orig_dt
-            
+
             # 2. Metabolic mapping (Signaling -> Metabolism)
             constraints, scalings = self.bridge.get_constraints_with_scalings(state)
-            
+
             # 3. FBA solver
             fba_result = self.solver.optimize(constraints, scalings=scalings)
-            
+
+            # Log FBA solver decision
+            diagnostic = fba_result.get("diagnostic", "None")
+            audit_log.log_solver_decision(step, fba_result["status"], fba_result["objective_value"], diagnostic)
+
             if refine_feedback and fba_result["status"] == "optimal":
-                # Predictor-Corrector: 
+                # Predictor-Corrector:
                 # Use predicted feedback to re-run signaling for better accuracy
                 feedback_pred = self.bridge.get_feedback(fba_result["fluxes"])
                 avg_feedback = (feedback_old + feedback_pred) / 2.0
-                
+
                 # Reset and correct signaling
                 state = state_old.copy()
                 for _ in range(sub_steps):
@@ -149,10 +160,19 @@ class SimulationEngine:
                     self.integrator.dt = dt_small
                     state = self.integrator.step(state, inhibition, feedback=avg_feedback)
                     self.integrator.dt = orig_dt
-                
+
                 # Re-run FBA with corrected state
                 constraints, scalings = self.bridge.get_constraints_with_scalings(state)
                 fba_result = self.solver.optimize(constraints, scalings=scalings)
+
+                # Log the refinement step
+                from .core.audit import AuditSeverity
+                audit_log.log_event(
+                    step=step,
+                    component="Predictor-Corrector",
+                    message="Applied predictor-corrector refinement",
+                    severity=AuditSeverity.INFO
+                )
 
             growth = fba_result["objective_value"]
             fluxes = fba_result["fluxes"]
@@ -175,5 +195,19 @@ class SimulationEngine:
 
         history["signaling"] = np.array(signaling_hist)
         history["growth"] = np.array(growth_hist)
+
+        # Convert audit log to serializable format
+        history["audit_log"] = [
+            {
+                "timestamp": event.timestamp.isoformat(),
+                "step": event.step,
+                "component": event.component,
+                "message": event.message,
+                "severity": event.severity.value,
+                "metadata": event.metadata
+            }
+            for event in audit_log.events
+        ]
+
         return history
 
