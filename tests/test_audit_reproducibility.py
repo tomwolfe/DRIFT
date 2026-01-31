@@ -30,12 +30,10 @@ def test_reproducible_identical_runs():
     result2 = wb2.run_simulation(steps=steps)
 
     # Compare signaling arrays
-    assert np.array_equal(result1["signaling"], result2["signaling"]), \
-        "Signaling arrays should be identical with same seed"
+    assert np.array_equal(result1["signaling"], result2["signaling"]), "Signaling arrays should be identical"
     
     # Compare growth arrays
-    assert np.array_equal(result1["growth"], result2["growth"]), \
-        "Growth arrays should be identical with same seed"
+    assert np.array_equal(result1["growth"], result2["growth"]), "Growth arrays should be identical"
     
     # Both should have audit logs
     assert "audit_log" in result1
@@ -81,13 +79,14 @@ def test_audit_log_contains_events():
 def test_headless_proxy_failure_audit():
     """
     Triggers a 'HeadlessProxy' failure by providing impossible constraints
-    and verifies the 'audit_log' captures the 'SolverError'.
+    and verifies the 'audit_log' captures the 'SolverError' with AuditSeverity.ERROR.
     """
     # Create a headless solver (no actual solver installed)
     solver = DFBASolver(model_name="textbook")
 
-    # Force headless mode to test proxy
+    # Force headless mode and proxy logic
     solver.headless = True
+    solver.model = None
     if not hasattr(solver, "proxy_params"):
         solver.proxy_params = {"base_growth": 0.2}
 
@@ -102,16 +101,21 @@ def test_headless_proxy_failure_audit():
     # Test with negative growth (should trigger PhysicalBoundValidator)
     solver.proxy_params["base_growth"] = -0.5  # Negative growth
 
-    # This should raise a SolverError due to PhysicalBoundValidator
-    constraints = {"EX_glc__D_e": -10.0}
-    scalings = {"EX_glc__D_e": 0.1}  # Low scaling to potentially cause negative growth
+    # We expect this to be caught by the engine and logged as an ERROR
+    result = engine.run(steps=5, drug_concentration=1.0)
 
-    with pytest.raises(SolverError) as exc_info:
-        solver._solve_proxy(constraints, scalings=scalings)
+    # Verify cell death occurred
+    assert result["cell_death"] is True
+    assert "PhysicalBoundValidator" in result["death_cause"]
 
-    # Verify the error message indicates PhysicalBoundValidator caught it
-    assert "PhysicalBoundValidator" in str(exc_info.value)
-    assert "negative" in str(exc_info.value)
+    # Verify audit log captures the error
+    audit_events = result["audit_log"]
+    error_events = [e for e in audit_events if e["severity"] == "error"]
+    
+    assert len(error_events) > 0, "Should have error events in audit log"
+    assert "FBA Solver" in error_events[0]["component"]
+    assert "Critical Solver Error" in error_events[0]["message"]
+    assert "PhysicalBoundValidator" in error_events[0]["metadata"]["error"]
 
 
 def test_audit_log_integration_in_engine():
@@ -168,11 +172,9 @@ def test_different_seeds_produce_different_results():
     result2 = wb2.run_simulation(steps=steps)
 
     # Results should be different
-    assert not np.array_equal(result1["signaling"], result2["signaling"]), \
-        "Signaling arrays should be different with different seeds"
+    assert not np.array_equal(result1["signaling"], result2["signaling"]), "Signaling arrays should be different"
     
-    assert not np.array_equal(result1["growth"], result2["growth"]), \
-        "Growth arrays should be different with different seeds"
+    assert not np.array_equal(result1["growth"], result2["growth"]), "Growth arrays should be different"
 
 
 def test_audit_log_serialization():
@@ -193,3 +195,40 @@ def test_audit_log_serialization():
         assert len(parsed_back) == len(result["audit_log"])
     except (TypeError, ValueError) as e:
         pytest.fail(f"Audit log is not JSON serializable: {e}")
+
+
+def test_audit_log_utility_methods():
+    """
+    Tests utility methods of SimulationAuditLog to ensure high coverage.
+    """
+    from drift.core.audit import SimulationAuditLog, AuditSeverity
+    
+    audit = SimulationAuditLog()
+    
+    # Test log_event
+    audit.log_event(step=1, component="Test", message="Info message", severity=AuditSeverity.INFO)
+    audit.log_event(step=2, component="Test", message="Warning message", severity=AuditSeverity.WARNING)
+    audit.log_event(step=3, component="Other", message="Error message", severity=AuditSeverity.ERROR)
+    
+    # Test log_constraint_violation
+    audit.log_constraint_violation(step=4, constraint_id="R1", expected_value=10.0, actual_value=15.0)
+    
+    # Test get_events_by_severity
+    info_events = audit.get_events_by_severity(AuditSeverity.INFO)
+    assert len(info_events) == 1
+    assert info_events[0].step == 1
+    
+    # Test get_events_by_component
+    test_events = audit.get_events_by_component("Test")
+    assert len(test_events) == 2
+    
+    # Test get_summary_stats
+    stats = audit.get_summary_stats()
+    assert stats["total_events"] == 4
+    assert stats["info_count"] == 1
+    assert stats["warning_count"] == 2 # log_constraint_violation is WARNING
+    assert stats["error_count"] == 1
+    
+    # Test clear
+    audit.clear()
+    assert len(audit.events) == 0

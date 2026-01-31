@@ -5,7 +5,8 @@ from .binding import BindingEngine
 from .signaling import StochasticIntegrator
 from .metabolic import MetabolicBridge, DFBASolver
 from .core.reproducibility import get_rng
-from .core.audit import SimulationAuditLog
+from .core.audit import SimulationAuditLog, AuditSeverity
+from .core.exceptions import SolverError
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +98,16 @@ class SimulationEngine:
         # Initialize audit log
         from .core.audit import SimulationAuditLog
         audit_log = SimulationAuditLog()
+        
+        dt_small = self.integrator.dt / sub_steps
+
+        if sub_steps > 1:
+            audit_log.log_step_size_adjustment(
+                step=0,
+                old_step_size=self.integrator.dt,
+                new_step_size=dt_small,
+                reason=f"Sub-stepping enabled (sub_steps={sub_steps}) for integration stability."
+            )
 
         history: SimulationResult = {
             "time": np.arange(steps) * self.integrator.dt,
@@ -116,8 +127,6 @@ class SimulationEngine:
 
         signaling_hist = []
         growth_hist = []
-
-        dt_small = self.integrator.dt / sub_steps
 
         for step in range(steps):
             if history["cell_death"]:
@@ -141,11 +150,25 @@ class SimulationEngine:
             constraints, scalings = self.bridge.get_constraints_with_scalings(state)
 
             # 3. FBA solver
-            fba_result = self.solver.optimize(constraints, scalings=scalings)
-
-            # Log FBA solver decision
-            diagnostic = fba_result.get("diagnostic", "None")
-            audit_log.log_solver_decision(step, fba_result["status"], fba_result["objective_value"], diagnostic)
+            try:
+                fba_result = self.solver.optimize(constraints, scalings=scalings)
+                # Log FBA solver decision
+                diagnostic = fba_result.get("diagnostic", "None")
+                audit_log.log_solver_decision(step, fba_result["status"], fba_result["objective_value"], diagnostic)
+            except SolverError as e:
+                audit_log.log_event(
+                    step=step,
+                    component="FBA Solver",
+                    message=f"Critical Solver Error: {str(e)}",
+                    severity=AuditSeverity.ERROR,
+                    metadata={"error": str(e), "status": "failed"}
+                )
+                fba_result = {
+                    "objective_value": 0.0,
+                    "fluxes": {},
+                    "status": "failed",
+                    "diagnostic": str(e)
+                }
 
             if refine_feedback and fba_result["status"] == "optimal":
                 # Predictor-Corrector:
@@ -163,10 +186,31 @@ class SimulationEngine:
 
                 # Re-run FBA with corrected state
                 constraints, scalings = self.bridge.get_constraints_with_scalings(state)
-                fba_result = self.solver.optimize(constraints, scalings=scalings)
+                try:
+                    fba_result = self.solver.optimize(constraints, scalings=scalings)
+                    # Log the refinement FBA decision
+                    audit_log.log_solver_decision(
+                        step, 
+                        fba_result["status"], 
+                        fba_result["objective_value"], 
+                        fba_result.get("diagnostic", "Refinement step")
+                    )
+                except SolverError as e:
+                    audit_log.log_event(
+                        step=step,
+                        component="FBA Solver",
+                        message=f"Critical Solver Error during refinement: {str(e)}",
+                        severity=AuditSeverity.ERROR,
+                        metadata={"error": str(e), "status": "failed"}
+                    )
+                    fba_result = {
+                        "objective_value": 0.0,
+                        "fluxes": {},
+                        "status": "failed",
+                        "diagnostic": str(e)
+                    }
 
                 # Log the refinement step
-                from .core.audit import AuditSeverity
                 audit_log.log_event(
                     step=step,
                     component="Predictor-Corrector",
@@ -178,7 +222,7 @@ class SimulationEngine:
             fluxes = fba_result["fluxes"]
             status = fba_result["status"]
 
-            if status != "optimal":
+            if status not in ["optimal", "proxied"]:
                 history["cell_death"] = True
                 history["death_step"] = step
                 diag = fba_result.get("diagnostic", "Unknown constraint")

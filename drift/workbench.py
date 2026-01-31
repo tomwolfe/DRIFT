@@ -676,6 +676,7 @@ class Workbench:
                 "params": hist.get("params", {}),
                 "cell_death": hist.get("cell_death", False),
                 "death_step": hist.get("death_step"),
+                "audit_log": hist.get("audit_log", []),
                 "data": {
                     "time": hist["time"].tolist(),
                     "growth": hist["growth"].tolist(),
