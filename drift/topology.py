@@ -91,7 +91,7 @@ class Topology:
                 for i, s_id in enumerate(species):
                     try:
                         _rr_instance[s_id] = state[i]
-                    except Exception:
+                    except (KeyError, ValueError, RuntimeError):
                         continue
                 
                 # Handle inhibition: can be scalar (legacy) or vector
@@ -209,7 +209,7 @@ class Topology:
         local_namespace: Dict[str, Any] = {}
         from numba import njit
         try:
-            # nosec B102: exec is used for JIT compilation of internally generated code from SBML qual model
+            # JIT compilation of internally generated code from SBML qual model
             compiled_code = compile(code, '<string>', 'exec')
             exec(compiled_code, {"np": np, "njit": njit}, local_namespace)  # nosec B102
             drift_fn = local_namespace["jitted_qual_drift"]
@@ -266,12 +266,12 @@ class Topology:
                         eval_f = re.sub(rf'\b{s_id}\b', str(state[idx]), eval_f)
                     eval_f = eval_f.replace("&&", " and ").replace("||", " or ").replace("!", " not ")
                     try:
-                        # nosec B307: eval is used with restricted namespace for SBML expressions from trusted files
+                        # eval is used with restricted namespace for SBML expressions from trusted files
                         result = eval(eval_f, {"__builtins__": {}}, {})  # nosec B307
                         if result:
                             active_level = level
                             break
-                    except Exception:  # nosec B110 - Specific exception handling instead of bare except, intentional pass
+                    except Exception:  # nosec B110
                         pass
                 for out_id in trans["outputs"]:  # type: ignore
                     out_idx = s_map.get(out_id)
