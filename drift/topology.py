@@ -1,7 +1,7 @@
 import numpy as np
 import json
 import logging
-from typing import List, Dict, Any, Optional, Callable
+from typing import List, Dict, Any, Optional, Callable, Union
 
 logger = logging.getLogger(__name__)
 
@@ -82,21 +82,41 @@ class Topology:
         drift_fn = None
         try:
             import roadrunner
-            def rr_drift_fn(state: np.ndarray, params: Any, inhibition: float = 0.0, feedback: Optional[np.ndarray] = None) -> Any:
-                rr = roadrunner.RoadRunner(sbml_path)
-                rr.reset()
+            # Persistent RoadRunner instance for this Topology
+            # Note: For multiprocessing, this would need to be re-initialized in each worker
+            _rr_instance = roadrunner.RoadRunner(sbml_path)
+            
+            def rr_drift_fn(state: np.ndarray, params: Any, inhibition: Union[float, np.ndarray] = 0.0, feedback: Optional[np.ndarray] = None) -> Any:
+                _rr_instance.reset()
                 for i, s_id in enumerate(species):
-                    rr[s_id] = state[i]
-                if inhibited_species:
-                    rr[inhibited_species] *= (1.0 - inhibition)
-                if feedback is not None and isinstance(feedback, (float, int)):
-                    rr.model.setGlobalParameterValues(rr.model.getGlobalParameterIds(), 
-                                                     [v * feedback for v in rr.model.getGlobalParameterValues()])
-                return rr.getRatesOfChange()
+                    try:
+                        _rr_instance[s_id] = state[i]
+                    except Exception:
+                        continue
+                
+                # Handle inhibition: can be scalar (legacy) or vector
+                if isinstance(inhibition, (float, int)):
+                    if inhibited_species:
+                        _rr_instance[inhibited_species] *= (1.0 - inhibition)
+                elif isinstance(inhibition, np.ndarray):
+                    for i, s_id in enumerate(species):
+                        if inhibition[i] > 0:
+                            _rr_instance[s_id] *= (1.0 - inhibition[i])
+
+                if feedback is not None:
+                    # Apply feedback to all parameters as a global scaling factor
+                    p_ids = _rr_instance.model.getGlobalParameterIds()
+                    p_vals = _rr_instance.model.getGlobalParameterValues()
+                    # Use mean feedback as a global modulator for metabolic coupling
+                    fb_scalar = np.mean(feedback)
+                    _rr_instance.model.setGlobalParameterValues(p_ids, [v * fb_scalar for v in p_vals])
+                
+                return _rr_instance.getRatesOfChange()
+                
             drift_fn = rr_drift_fn
-            logger.info("Successfully formalized SBML logic using libRoadRunner.")
+            logger.info(f"Successfully formalized SBML logic for '{name}' using libRoadRunner.")
         except ImportError:
-            logging.getLogger(__name__).debug("libRoadRunner not found, SBML drift will use default decay logic.")
+            logger.info("libRoadRunner not found. SBML drift will use default decay logic unless jitted_step_fn is provided.")
 
         return cls(
             species=species,

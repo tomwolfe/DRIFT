@@ -17,7 +17,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 warnings.filterwarnings("ignore", category=UserWarning)
 
 
-def main(config: SimulationConfig = None, run_sensitivity=False, json_export=None, human_cancer=False):
+def main(config: SimulationConfig = None, run_sensitivity=False, json_export=None, human_cancer=False, diabetes=False, web_schema=None):
     print("==========================================================")
     print("   DRIFT: Multi-Scale Stochastic Research Workbench       ")
     print("==========================================================")
@@ -25,8 +25,17 @@ def main(config: SimulationConfig = None, run_sensitivity=False, json_export=Non
     # Use provided config or create default
     if config is None:
         config = SimulationConfig()
+    
+    # Export web schema if requested
+    if web_schema:
+        import json
+        schema = config.to_web_schema()
+        with open(web_schema, "w") as f:
+            json.dump(schema, f, indent=4)
+        print(f"[*] Web configuration schema exported to: {web_schema}")
+        return
 
-    # Apply Human Cancer pre-configuration if requested
+    # Apply presets if requested
     topology = None
     bridge = None
     if human_cancer:
@@ -35,6 +44,12 @@ def main(config: SimulationConfig = None, run_sensitivity=False, json_export=Non
         bridge = get_human_cancer_bridge()
         config.model_name = "recon1" # Standard human model
         print("[*] Human Cancer Mode enabled (PI3K/AKT/mTOR/AMPK + Recon1)")
+    elif diabetes:
+        from drift.presets import get_diabetes_topology, get_diabetes_bridge
+        topology = get_diabetes_topology()
+        bridge = get_diabetes_bridge()
+        config.model_name = "recon1"
+        print("[*] Type 2 Diabetes Mode enabled (Insulin -> PI3K -> AS160 + Recon1)")
 
     print(f"[*] Configuration: Kd={config.drug_kd}, [Drug]={config.drug_concentration}")
     print(f"[*] Units: {config.concentration_unit}, {config.time_unit}")
@@ -142,7 +157,13 @@ def parse_args():
         "--human-cancer", action="store_true", help="Use human cancer signaling-metabolism bridge"
     )
     parser.add_argument(
+        "--diabetes", action="store_true", help="Use Type 2 Diabetes signaling-metabolism bridge"
+    )
+    parser.add_argument(
         "--export-json", type=str, help="Export results to JSON file"
+    )
+    parser.add_argument(
+        "--web-config", "--web-schema", dest="web_schema", type=str, help="Export web configuration schema to JSON file"
     )
 
     return parser.parse_args()
@@ -170,4 +191,11 @@ if __name__ == "__main__":
 
         config = SimulationConfig(**config_kwargs)
 
-    main(config, run_sensitivity=args.sensitivity, json_export=args.export_json, human_cancer=args.human_cancer)
+    main(
+        config, 
+        run_sensitivity=args.sensitivity, 
+        json_export=args.export_json, 
+        human_cancer=args.human_cancer,
+        diabetes=args.diabetes,
+        web_schema=args.web_schema
+    )

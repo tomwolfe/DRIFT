@@ -16,68 +16,16 @@ def seed_numba(seed: int) -> None:
 
 
 @njit
-def langevin_step_generic(state: np.ndarray, dt: float, params: np.ndarray, noise_scale: float, noise_vec: Optional[np.ndarray] = None, drift_fn: Optional[Callable] = None, feedback: Optional[np.ndarray] = None) -> Any:
+def langevin_step(state: np.ndarray, dt: float, params: np.ndarray, noise_scale: float, noise_vec: Optional[np.ndarray] = None, drift_fn: Optional[Callable] = None, feedback: Optional[np.ndarray] = None) -> Any:
     """
     One step of SDE integration using the Milstein scheme for better stability.
-    Uses state-dependent noise to ensure biological plausibility near [0, 1] boundaries.
-    Accepts an arbitrary jitted drift_fn and optional pre-generated noise.
+    This is the generic implementation that uses the provided drift_fn.
     """
     if drift_fn is None:
-         return state # Should not happen
-
-    drift = drift_fn(state, params, feedback=feedback)
-
-    # Random term (pre-generated for thread-safe reproducibility, or fallback)
-    if noise_vec is not None:
-        dw = noise_vec * np.sqrt(dt)
+        # Fallback: simple decay if no drift function is provided
+        drift = -0.1 * state
     else:
-        dw = np.random.normal(0, 1.0, size=len(state)) * np.sqrt(dt)
-
-    # State-dependent noise: b(x) = noise_scale * sqrt(x * (1-x))
-    eps = 1e-6
-    clamped_state = np.zeros_like(state)
-    for i in range(len(state)):
-        clamped_state[i] = max(eps, min(1.0 - eps, state[i]))
-
-    b = noise_scale * np.sqrt(clamped_state * (1.0 - clamped_state))
-    milstein_corr = 0.25 * (noise_scale**2) * (1.0 - 2.0 * clamped_state) * (dw**2 - dt)
-
-    # Update state
-    new_state = state + drift * dt + b * dw + milstein_corr
-
-    # Enforce non-negativity (clamping) to prevent numerical divergence
-    for i in range(len(new_state)):
-        val = new_state[i]
-        if val < 0: val = 0
-        if val > 1: val = 1
-        new_state[i] = val
-
-    return new_state
-
-
-@njit
-def langevin_step(state: np.ndarray, dt: float, params: np.ndarray, noise_scale: float, noise_vec: Optional[np.ndarray] = None, feedback: Optional[np.ndarray] = None) -> Any:
-    """
-    One step of SDE integration using the Milstein scheme for better stability.
-    Uses optional pre-generated noise_vec for local RNG control.
-    """
-    # Default PI3K_AKT_mTOR drift function
-    def default_drift_fn(state: np.ndarray, params: np.ndarray, feedback: Optional[np.ndarray] = None) -> np.ndarray:
-        # Extract parameters for PI3K-AKT-mTOR pathway
-        # params[0:3] are degradation rates, params[3:6] are production rates, params[6] is feedback
-        k_deg = params[0:3]  # degradation rates for PI3K, AKT, mTOR
-        k_prod = params[3:6]  # production rates
-        feedback_param = params[6] if len(params) > 6 else 1.0
-
-        if feedback is not None:
-            k_prod = k_prod * feedback  # Apply feedback modulation to production rates
-
-        # Simple linearized model for PI3K-AKT-mTOR pathway
-        # dx/dt = k_prod * (1-x) - k_deg * x
-        drift = k_prod * (1.0 - state) - k_deg * state
-        return drift # type: ignore
-
-    drift = default_drift_fn(state, params, feedback=feedback)
+        drift = drift_fn(state, params, feedback=feedback)
 
     # Random term
     if noise_vec is not None:

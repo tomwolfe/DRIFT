@@ -91,6 +91,57 @@ class SimulationConfig:
             "n_jobs": self.n_jobs,
         }
 
+    def to_web_schema(self) -> Dict[str, Any]:
+        """
+        Generates a JSON structure suitable for a frontend form.
+        Includes metadata like ranges and descriptions for better UI.
+        """
+        return {
+            "schema_version": "0.3.0",
+            "parameters": [
+                {
+                    "id": "drug_kd",
+                    "label": "Drug Dissociation Constant (Kd)",
+                    "type": "number",
+                    "default": self.drug_kd,
+                    "min": 0.001,
+                    "description": "Binding affinity (lower is stronger)"
+                },
+                {
+                    "id": "drug_concentration",
+                    "label": "Drug Concentration",
+                    "type": "number",
+                    "default": self.drug_concentration,
+                    "min": 0,
+                    "description": "Available drug in the system"
+                },
+                {
+                    "id": "sim_steps",
+                    "label": "Simulation Steps",
+                    "type": "integer",
+                    "default": self.sim_steps,
+                    "min": 1,
+                    "description": "Total time-steps to simulate"
+                },
+                {
+                    "id": "model_name",
+                    "label": "Metabolic Model",
+                    "type": "select",
+                    "options": ["textbook", "recon1", "iJO1366"],
+                    "default": self.model_name
+                },
+                {
+                    "id": "noise_scale",
+                    "label": "Noise Intensity",
+                    "type": "range",
+                    "min": 0,
+                    "max": 0.2,
+                    "step": 0.01,
+                    "default": self.noise_scale
+                }
+            ]
+        }
+
     def get_dashboard_filename(self) -> str:
         """Generate a descriptive filename based on parameters."""
         return f"outputs/drift_kd{self.drug_kd}_c{self.drug_concentration}_{self.model_name}.html"
