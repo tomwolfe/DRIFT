@@ -61,7 +61,6 @@ DRIFT's modeling approach is grounded in established systems biology literature:
 - **Multi-scale Coupling:** The integration of signaling and metabolism reflects recent advances in dynamic FBA as reviewed in *Reimers et al. (2021).*
 
 ## 🚀 Quick Start
-
 ### Installation
 **Using Pip:**
 ```bash
