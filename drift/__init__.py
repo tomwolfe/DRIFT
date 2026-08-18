@@ -3,6 +3,8 @@ from .binding import BindingEngine
 from .signaling import StochasticIntegrator
 from .metabolic import MetabolicBridge, DFBASolver
 from .topology import Topology, get_default_topology
+from .validation import ExternalValidator, ValidationReport, SpeciesComparison, MetricResult
+from .core.experimental_data import DatasetRegistry, DatasetMetadata, ValidationDataset
 from . import presets
 
 __version__ = "0.2.0"

@@ -1,5 +1,61 @@
+from typing import Optional
 from .topology import Topology
-from .metabolic import MetabolicBridge, BridgeBuilder
+from .metabolic import MetabolicBridge, BridgeBuilder, fuzzy_match_reaction_id
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def resolve_reaction_id(query_id: str, model_reaction_ids: list, strict: bool = False) -> Optional[str]:
+    """
+    Resolve a reaction ID against a model, handling common naming variations.
+
+    Supports Recon1 and other human GEM naming conventions:
+    - EX_glc__D_e vs glc_D_e vs glc_D
+    - BIOMASS_RECON1 vs BIOMASS_reaction
+    - Case-insensitive matching
+
+    Args:
+        query_id: The reaction ID to resolve
+        model_reaction_ids: List of valid reaction IDs in the model
+        strict: If True, returns None on ambiguity instead of best match
+
+    Returns:
+        Resolved reaction ID, or None if not found
+    """
+    # Try exact match first
+    if query_id in model_reaction_ids:
+        return query_id
+
+    # Try fuzzy match
+    matched = fuzzy_match_reaction_id(query_id, model_reaction_ids)
+    if matched:
+        return matched
+
+    # Try additional human GEM patterns
+    variations = []
+
+    # Pattern: EX_xxx__Y_e -> xxx-Y_e (SBML style)
+    if query_id.startswith("EX_") and "__" in query_id:
+        stripped = query_id[3:]  # Remove EX_
+        variations.append(stripped)
+
+    # Pattern: xxx-Y_e -> EX_xxx__Y_e
+    if not query_id.startswith("EX_"):
+        variations.append(f"EX_{query_id}")
+
+    # Pattern: BIOMASS_RECON1 -> BIOMASS_reaction
+    if "BIOMASS" in query_id.upper():
+        variations.extend(["BIOMASS_reaction", "BIOMASS_RECON1", "BIOMASS_maintenance"])
+
+    for var in variations:
+        if var in model_reaction_ids:
+            logger.debug(f"Resolved reaction ID: {query_id} -> {var}")
+            return var
+
+    logger.warning(f"Could not resolve reaction ID '{query_id}' against model")
+    return None
+
 
 def get_human_cancer_topology() -> Topology:
     """Returns a signaling topology common in human cancer (includes AMPK)."""

@@ -95,15 +95,31 @@ def create_langevin_integrator(drift_fn: Callable) -> Callable:
 class StochasticIntegrator:
     """Integrator for stochastic differential equations in signaling pathways."""
 
-    def __init__(self, dt: float = 0.1, noise_scale: float = 0.02, topology: Optional[Topology] = None, rng: Optional[np.random.Generator] = None):
+    # Time unit conversion factors (relative to minutes)
+    TIME_UNIT_FACTORS = {
+        "seconds": 1.0 / 60.0,
+        "sec": 1.0 / 60.0,
+        "s": 1.0 / 60.0,
+        "minutes": 1.0,
+        "min": 1.0,
+        "m": 1.0,
+        "hours": 60.0,
+        "hr": 60.0,
+        "h": 60.0,
+        "days": 1440.0,
+        "d": 1440.0,
+    }
+
+    def __init__(self, dt: float = 0.1, noise_scale: float = 0.02, topology: Optional[Topology] = None, rng: Optional[np.random.Generator] = None, time_unit: str = "minutes"):
         """
         Initialize the StochasticIntegrator.
 
         Args:
-            dt (float): Time step for integration
+            dt (float): Time step for integration (in time_unit)
             noise_scale (float): Scale of the noise term
             topology (Topology, optional): Signaling network topology
             rng (np.random.Generator, optional): Local random number generator
+            time_unit (str): Unit for dt (default: "minutes"). Rate constants are in min^-1.
         """
         if dt <= 0:
             raise ValueError(f"dt must be positive, got {dt}")
@@ -112,8 +128,15 @@ class StochasticIntegrator:
 
         self.dt = dt
         self.noise_scale = noise_scale
+        self.time_unit = time_unit
         self.topology = topology or get_default_topology()
         self.rng = rng or get_rng()
+
+        # Compute scale factor: rate constants in topology are in min^-1
+        # dt is in time_unit, so we need to convert dt to minutes for consistency
+        self.time_scale_factor = self.TIME_UNIT_FACTORS.get(time_unit.lower(), 1.0)
+        # Effective dt in minutes: dt * scale_factor
+        self._dt_minutes = self.dt * self.time_scale_factor
         
         # Default kinetic parameters
         self.base_params = np.array(list(self.topology.parameters.values()))

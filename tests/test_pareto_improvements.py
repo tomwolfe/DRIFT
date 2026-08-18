@@ -71,6 +71,6 @@ def test_solver_aware_proxy(monkeypatch):
     
     assert result["status"] == "proxied"
     assert "QUALITATIVE_NOTICE" in result
-    assert "Solver-Aware Proxy" in result["diagnostic"]
+    assert "Limiting Substrate Proxy" in result["diagnostic"]
     # Check that energy proxy is present
     assert "ATPS4r" in result["fluxes"]
