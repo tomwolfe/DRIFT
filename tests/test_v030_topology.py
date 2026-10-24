@@ -69,6 +69,70 @@ class TestV030Topology(unittest.TestCase):
         finally:
             if os.path.exists(json_path): os.remove(json_path)
 
+    def test_parameter_range_validation_flags_out_of_range(self):
+        topo = Topology(
+            species=["S1"],
+            parameters={"ok": 1.0, "neg": -0.1, "big": 11.0},
+        )
+        # The > 10 branch and the < 0 branch are separate verdicts; a flipped
+        # bool literal in either would have reported an implausible value as
+        # valid.
+        self.assertEqual(
+            topo.validate_parameter_ranges(),
+            {"ok": True, "neg": False, "big": False},
+        )
+
+    def test_pi3k_akt_mtor_drift_matches_equation(self):
+        state = np.full(3, 0.5)
+        params7 = np.array([0.1, 0.1, 0.5, 0.1, 0.5, 0.1, 0.5])
+        d = pi3k_akt_mtor_drift(state, params7)
+        # effective_pi3k = 0.5 * (1 - 0.5); dpi3k = 0.1 - 0.1 * 0.5
+        expected = np.array([0.05, 0.0125, 0.075])
+        np.testing.assert_allclose(d, expected, rtol=0, atol=1e-12)
+
+    def test_complex_signaling_drift_matches_equation(self):
+        state = np.full(4, 0.5)
+        params = np.array(
+            [0.1, 0.1, 0.5, 0.1, 0.5, 0.1, 0.5, 0.1, 0.0, 0.0, 0.0, 0.0]
+        )
+        d = complex_signaling_drift(state, params)
+        expected = np.array([
+            0.1 / 3.5 - 0.05,   # mtor_feedback = 1 / (1 + 5 * 0.5)
+            0.125 - 0.05,
+            0.125 / 6.0 - 0.05,  # ampk_inhibition = 1 / (1 + 10 * 0.5)
+            -0.05,
+        ])
+        np.testing.assert_allclose(d, expected, rtol=0, atol=1e-12)
+
+    def test_sbml_qual_compiles_the_generated_drift(self):
+        model = MagicMock()
+        qual_ext = MagicMock()
+        s1 = MagicMock()
+        s1.getId.return_value = "S1"
+        qual_ext.getListOfQualitativeSpecies.return_value = [s1]
+        out = MagicMock()
+        out.getQualitativeSpecies.return_value = "S1"
+        trans = MagicMock()
+        trans.getListOfOutputs.return_value = [out]
+        default_term = MagicMock()
+        default_term.getResultLevel.return_value = 0.0
+        ft = MagicMock()
+        ft.getMath.return_value = MagicMock()
+        ft.getResultLevel.return_value = 1.0
+        terms = MagicMock()
+        terms.getDefaultTerm.return_value = default_term
+        terms.__iter__ = lambda self: iter([ft])
+        trans.getListOfFunctionTerms.return_value = terms
+        qual_ext.getListOfTransitions.return_value = [trans]
+        with patch("libsbml.formulaToL3String", return_value="S1"):
+            topo = Topology._from_sbml_qual(model, qual_ext)
+        # A non-default term is emitted with the `if` prefix.  If that prefix
+        # is corrupted the generated source does not compile and the code
+        # silently falls back to the interpreted drift, which works but is not
+        # the compiled artefact this path promises.  The compiled function is
+        # the one that carries the model-name stamp.
+        self.assertTrue(hasattr(topo.drift_fn, "_drift_model_name"))
+
     def test_sbml_qual_jit_fail_fallback(self):
         model = MagicMock(); qual_ext = MagicMock()
         s1 = MagicMock(); s1.getId.return_value = "S1"
@@ -93,8 +157,14 @@ class TestV030Topology(unittest.TestCase):
             with patch("libsbml.SBMLReader.readSBML", return_value=doc):
                 topo = Topology.from_sbml("fake.xml")
                 if topo.drift_fn:
-                    topo.drift_fn(np.array([0.5]), None)
+                    rates = topo.drift_fn(np.array([0.5]), None)
                     self.assertTrue(rr_inst.reset.called)
+                    # The drift function's contract is to RETURN the rates, not
+                    # merely to reset the RoadRunner instance on the way.  The
+                    # reset-only assertion above let a `return None` mutant
+                    # survive, so pin the value too.
+                    self.assertIs(rates,
+                                  rr_inst.getRatesOfChange.return_value)
 
 if __name__ == "__main__":
     unittest.main()

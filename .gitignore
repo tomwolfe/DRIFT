@@ -153,3 +153,10 @@ cython_debug/
 *.html
 outputs/*
 !outputs/.gitkeep
+# Tether's session audit trail: a LOCAL artefact of a run (it is what the
+# next run reads to detect incomplete sessions), so it never belongs in the
+# tree.  The integration artefacts under output/ are NOT ignored: they
+# carry the provenance chain (the four repository heads, the Lean digests
+# and the benchmark summary) and a reviewer reads them.
+.tether/
+

@@ -1,0 +1,53 @@
+mission:
+  name: drift-unit-gate
+  goal: |
+    Pin DRIFT's solver fallback and seed propagation, in a clean room.
+
+    Two properties that are easy to believe and easy to lose:
+
+      * the SOLVER FALLBACK: when no COBRA-compatible LP solver is
+        available, the engine degrades to the headless proxy -- and in
+        strict mode it REFUSES to run instead of quietly proxying.  When a
+        solver IS available (GLPK via optlang), the engine uses it and is
+        not headless;
+      * the SEED PROPAGATION: a seeded simulation is reproducible, and the
+        seed reaches NUMBA's generator -- the one the jitted drift draws
+        its noise from -- not merely NumPy's.
+
+    The fallback is asserted by MEASURING the solver registry (what optlang
+    reports) and checking that the engine's notion of "no solver" agrees
+    with it, rather than by reading the code.
+context:
+  - "DRIFT's DFBASolver._check_solver reads optlang's available_solvers; an empty registry means headless mode (a qualitative proxy), and strict=True raises instead."
+  - "Numba's RNG is a separate state from NumPy's, so the seeding call lives in a jitted function (drift/signaling.py :: seed_numba) and the reproducibility test draws from a jitted function."
+  - "SimulationEngine.run(seed=...) seeds the engine's generator, the integrator's generator and Numba's (drift/engine.py)."
+workspace_repos: []
+constraints:
+  - "Do NOT create any git commits. Leave every change in the working tree, uncommitted; this mission runs with git_state_guard: true."
+  - "Do NOT weaken or delete an existing test expectation without justification"
+  - "A test that cannot run in this environment must SKIP WITH A REASON, never pass vacuously"
+git_state_guard: true
+verification:
+  clean_room: true
+  commands:
+    # The fallback and the seed propagation.
+    - "env PYTHONPATH=. python3 -m pytest tests/test_solver_fallbacks.py -q -p no:cacheprovider"
+    # The jitted topology's own seeding path.
+    - "env PYTHONPATH=. python3 -m pytest tests/test_jit_topology.py -q -p no:cacheprovider"
+    # The whole suite, so a fallback change cannot hide elsewhere.
+    - "env PYTHONPATH=. python3 -m pytest tests/ -q -p no:cacheprovider"
+  timeout_seconds: 1800
+review:
+  enabled: true
+  required: true
+  adapter: opencode
+  retry_on_rejection: true
+recovery:
+  max_attempts: 1
+adapter: opencode
+adapters:
+  opencode:
+    command: ["opencode", "run", "--auto", "-m", "opencode/beam-free", "{prompt}"]
+    timeout_seconds: 3600
+budget:
+  max_wall_seconds: 5400

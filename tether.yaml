@@ -1,0 +1,32 @@
+# Tether project configuration.
+# Precedence: CLI flags > mission file > this file > defaults.
+default_adapter: opencode
+audit_dir: .tether/sessions
+dry_run: false
+log_level: INFO
+command_timeout_seconds: 3600
+verification_timeout_seconds: 1800
+max_attempts: 3
+# Enforce, not the default "warn". The opencode preset below runs with
+# `--auto`, so the opencode CLI stops auto-rejecting in-scope reads (it was
+# refusing a multi-repo reviewer the ability to look at ../QED and
+# ../VeriTrial, which is how the tri-repo gate failed its review layer three
+# separate times with "no valid review verdict found"). Enforcement therefore
+# has to live in the layer that is auditable, and that is this sandbox: it
+# fails the mission on any write outside allowed_paths, and `enforce` widens
+# detection to gitignored and untracked writes via the filesystem-manifest
+# diff. "warn" detects strictly less while the model-side approval is off.
+sandbox_mode: enforce
+verification:
+  commands: []
+adapters:
+  opencode:
+    # `--auto` = "auto-approve permissions that are not explicitly denied".
+    # Needed because the CLI gates its own file access and, run
+    # non-interactively, auto-rejects anything outside the project directory
+    # -- including reads of the sibling repositories these missions are
+    # explicitly scoped to. Prompting the model not to reach for the
+    # read-only path is mitigation, not enforcement: it took the gate from
+    # consistently red to green roughly 1 run in 3. The safety that `--auto`
+    # gives up at the model layer is held by `sandbox_mode: enforce` above.
+    command: ["opencode", "run", "--auto", "-m", "opencode/beam-free", "{prompt}"]

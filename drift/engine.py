@@ -10,6 +10,14 @@ from .core.exceptions import SolverError
 
 logger = logging.getLogger(__name__)
 
+
+def _primary_inhibition(inhibition: Union[float, Dict[str, float]]) -> float:
+    """The representative inhibition of a (possibly multi-target) result."""
+    if isinstance(inhibition, dict):
+        return max(inhibition.values()) if inhibition else 0.0
+    return float(inhibition)
+
+
 class SimulationResult(TypedDict):
     """Schema for simulation history results."""
     time: np.ndarray
@@ -20,6 +28,8 @@ class SimulationResult(TypedDict):
     death_step: Optional[int]
     death_cause: Optional[str]
     inhibition: float
+    concentration: np.ndarray
+    inhibition_series: np.ndarray
     drug_kd: Union[float, Dict[str, float]]
     params: Dict[str, float]
     headless: bool
@@ -49,17 +59,64 @@ class SimulationEngine:
         # Sync RNG with integrator
         self.integrator.rng = self.rng
 
+    def _prepare_profile(
+        self,
+        drug_profile: Optional[np.ndarray],
+        drug_profile_times: Optional[np.ndarray],
+    ) -> tuple:
+        """Validate and normalise the concentration profile.
+
+        Returns ``(profile, times)``; both are ``None`` when the run is
+        driven by a scalar concentration instead.
+        """
+        if drug_profile is None:
+            if drug_profile_times is not None:
+                raise ValueError(
+                    "drug_profile_times was given without a drug_profile")
+            return None, None
+
+        profile = np.asarray(drug_profile, dtype=np.float64).reshape(-1)
+        if profile.size == 0:
+            raise ValueError("drug_profile must not be empty")
+        if drug_profile_times is None:
+            times = np.arange(profile.size, dtype=np.float64) * self.integrator.dt
+        else:
+            times = np.asarray(drug_profile_times, dtype=np.float64).reshape(-1)
+        if times.size != profile.size:
+            raise ValueError(
+                "drug_profile and drug_profile_times must have the same "
+                f"length ({profile.size} != {times.size})")
+        if np.any(np.diff(times) < 0):
+            raise ValueError("drug_profile_times must be non-decreasing")
+        if np.any(profile < 0):
+            raise ValueError("drug_profile must be non-negative")
+        return profile, times
+
     def run(
         self,
         steps: int,
-        drug_concentration: float,
+        drug_concentration: Optional[float] = None,
         sub_steps: int = 5,
         refine_feedback: bool = False,
         custom_params: Optional[Dict[str, float]] = None,
-        seed: Optional[int] = None
+        seed: Optional[int] = None,
+        drug_profile: Optional[np.ndarray] = None,
+        drug_profile_times: Optional[np.ndarray] = None
     ) -> SimulationResult:
         """
         Runs the simulation loop.
+
+        The drug can be given in two ways:
+
+        * ``drug_concentration``: a scalar concentration that drives every
+          step with the same value;
+        * ``drug_profile`` (with ``drug_profile_times``): the
+          concentration-TIME PROFILE of the trial -- VeriTrial's PBPK
+          output -- sampled at the step's own time.  This is the seam
+          between the two engines: the plasma concentration profile is
+          what the PD layer sees.
+
+        Exactly one of the two must be given.
         """
         if seed is not None:
             self.rng = get_rng(seed)
@@ -74,13 +131,29 @@ class SimulationEngine:
                 if p_name in custom_params:
                     self.integrator.base_params[i] = custom_params[p_name]
 
-        inhibition = self.binding.calculate_inhibition(drug_concentration)
+        profile, profile_times = self._prepare_profile(
+            drug_profile, drug_profile_times)
+        if profile is None and drug_concentration is None:
+            raise ValueError(
+                "either drug_concentration or drug_profile must be given")
+
+        # The exposure of every step: the concentration the PD layer sees
+        # and the inhibition it derives from it.
+        scalar_concentration = (float(drug_concentration)
+                                if drug_concentration is not None else 0.0)
+
+        def step_exposure(step: int) -> tuple:
+            if profile is None:
+                concentration = scalar_concentration
+            else:
+                concentration = float(np.interp(
+                    step * self.integrator.dt, profile_times, profile))
+            return concentration, self.binding.calculate_inhibition(concentration)
 
         # Calculate a representative inhibition for logging/history
-        if isinstance(inhibition, dict):
-            primary_inhibition = max(inhibition.values()) if inhibition else 0.0
-        else:
-            primary_inhibition = inhibition
+        primary_inhibition = _primary_inhibition(
+            self.binding.calculate_inhibition(scalar_concentration)
+        )
 
         if self.solver.headless:
             logger.warning("SimulationEngine: Running in HEADLESS mode. Metabolism is PROXIED (QUALITATIVE RESULTS ONLY).")
@@ -118,6 +191,8 @@ class SimulationEngine:
             "death_step": None,
             "death_cause": None,
             "inhibition": primary_inhibition,
+            "concentration": np.zeros(steps),
+            "inhibition_series": np.zeros(steps),
             "drug_kd": hist_kd,
             "params": custom_params or {},
             "headless": self.solver.headless,
@@ -127,8 +202,16 @@ class SimulationEngine:
 
         signaling_hist = []
         growth_hist = []
+        concentration_hist = []
+        inhibition_hist = []
 
         for step in range(steps):
+            # The PK seam: the concentration of this step, and the
+            # inhibition DRIFT's Hill binding derives from it.
+            concentration, inhibition = step_exposure(step)
+            concentration_hist.append(concentration)
+            inhibition_hist.append(_primary_inhibition(inhibition))
+
             if history["cell_death"]:
                 # Once dead, stay dead
                 signaling_hist.append(state.copy())
@@ -239,6 +322,17 @@ class SimulationEngine:
 
         history["signaling"] = np.array(signaling_hist)
         history["growth"] = np.array(growth_hist)
+        history["concentration"] = np.asarray(
+            concentration_hist, dtype=np.float64)
+        history["inhibition_series"] = np.asarray(
+            inhibition_hist, dtype=np.float64)
+        if profile is not None:
+            # The peak exposure of the trial: the largest inhibition the
+            # profile ever asks for.
+            history["inhibition"] = (
+                float(history["inhibition_series"].max())
+                if history["inhibition_series"].size else 0.0
+            )
 
         # Convert audit log to serializable format
         history["audit_log"] = [

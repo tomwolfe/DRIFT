@@ -1,0 +1,184 @@
+{
+  "dose_mg": 400.0,
+  "km": 0.5,
+  "hill": 1.5,
+  "bioavailability": 0.89,
+  "cmax": 18.008767256600933,
+  "pmax": 18.008767256600933,
+  "conc_auc": 47.094932949533685,
+  "inhibition_max": 0.9953950543677521,
+  "hours": 24.0,
+  "steps": 480,
+  "seed": 20261021,
+  "monotonicity": {
+    "pairs_checked": 1176,
+    "inhibition_min": 0.0,
+    "inhibition_max": 0.9953950543677521,
+    "monotone": true
+  },
+  "one_trial": {
+    "steps": 480,
+    "concentration_matches_profile": true,
+    "inhibition_matches_hill": true
+  },
+  "dose_ladder": [
+    {
+      "dose_mg": 0.0,
+      "cmax_mg_per_l": 0.0,
+      "conc_auc_mg_h_per_l": 0.0,
+      "inhibition_max": 0.0,
+      "mean_growth": 0.6315234653285309,
+      "growth_auc": 15.128683769565741,
+      "max_growth": 0.6662301800816123,
+      "cell_death": false
+    },
+    {
+      "dose_mg": 100.0,
+      "cmax_mg_per_l": 4.502191814150233,
+      "conc_auc_mg_h_per_l": 11.773733237383421,
+      "inhibition_max": 0.964310860762955,
+      "mean_growth": 0.6029234925443492,
+      "growth_auc": 14.442289166934463,
+      "max_growth": 0.6626354803127367,
+      "cell_death": false
+    },
+    {
+      "dose_mg": 200.0,
+      "cmax_mg_per_l": 9.004383628300467,
+      "conc_auc_mg_h_per_l": 23.547466474766843,
+      "inhibition_max": 0.9870839971236822,
+      "mean_growth": 0.5931075999236887,
+      "growth_auc": 14.206710997733996,
+      "max_growth": 0.6601933058141838,
+      "cell_death": false
+    },
+    {
+      "dose_mg": 400.0,
+      "cmax_mg_per_l": 18.008767256600933,
+      "conc_auc_mg_h_per_l": 47.094932949533685,
+      "inhibition_max": 0.9953950543677521,
+      "mean_growth": 0.5827394723376148,
+      "growth_auc": 13.957880898679786,
+      "max_growth": 0.6572705921534898,
+      "cell_death": false
+    },
+    {
+      "dose_mg": 800.0,
+      "cmax_mg_per_l": 36.017534513201866,
+      "conc_auc_mg_h_per_l": 94.18986589906737,
+      "inhibition_max": 0.9983670447930795,
+      "mean_growth": 0.5718339729190066,
+      "growth_auc": 13.696156426574873,
+      "max_growth": 0.6559332313511762,
+      "cell_death": false
+    }
+  ],
+  "cell_death": {
+    "infeasible": {
+      "demand": 5.0,
+      "constraints": {
+        "EX_glc__D_e": -5.5,
+        "Biomass_Ecoli_core": 5.0
+      },
+      "lp_status": "infeasible",
+      "lp_objective": 0.0,
+      "lp_bottlenecks": {
+        "EX_glc__D_e": -5.5,
+        "Biomass_Ecoli_core": 5.0
+      },
+      "lp_diagnostic": "Potential bottlenecks: Biomass_Ecoli_core (LB: 5.00)",
+      "cell_death": true,
+      "death_step": 0,
+      "death_cause": "Potential bottlenecks: Biomass_Ecoli_core (LB: 5.00)",
+      "growth": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "statuses": [
+        "infeasible",
+        "dead",
+        "dead",
+        "dead"
+      ]
+    },
+    "feasible_control": {
+      "demand": 0.1,
+      "constraints": {
+        "EX_glc__D_e": -5.5,
+        "Biomass_Ecoli_core": 0.1
+      },
+      "lp_status": "optimal",
+      "lp_objective": 0.4614301482804588,
+      "lp_bottlenecks": {},
+      "lp_diagnostic": null,
+      "cell_death": false,
+      "death_step": null,
+      "death_cause": null,
+      "growth": [
+        0.46260688221989466,
+        0.4655039709265498,
+        0.4679599664829126,
+        0.4705783790712771
+      ],
+      "statuses": [
+        "optimal",
+        "optimal",
+        "optimal",
+        "optimal"
+      ]
+    }
+  },
+  "formal_gate": {
+    "qed": "/Users/tom/Documents/apps/QED",
+    "verified": 10,
+    "skipped": 0,
+    "sorry": 0,
+    "lemmas": [
+      "C_drug / (C_drug + Kd) + Kd / (C_drug + Kd) = 1",
+      "C_drug / (C_drug + Kd) >= 0",
+      "Kd / (C_drug + Kd) >= 0",
+      "1 - C_drug / (C_drug + Kd) >= 0",
+      "1 - Kd / (C_drug + Kd) >= 0",
+      "C_drug2 / (C_drug2 + Kd) - C_drug1 / (C_drug1 + Kd) = Kd * (C_drug2 - C_drug1) / ((C_drug1 + Kd) * (C_drug2 + Kd))",
+      "C_flux * (Km + 1) / (Km + C_flux) = C_flux / (Km + C_flux) + C_flux * Km / (Km + C_flux)",
+      "C_flux * (Km + 1) / (Km + C_flux) * (Km + C_flux) = C_flux * (Km + 1)",
+      "C_flux * (Km + 1) / (Km + C_flux) / (Km + 1) = C_flux / (Km + C_flux)",
+      "Vmax * C_flux * (Km + 1) / (Km + C_flux) = Vmax * C_flux / (Km + C_flux) + Vmax * C_flux * Km / (Km + C_flux)"
+    ]
+  },
+  "benchmark": {
+    "growth_by_dose": {
+      "0.0": 0.6315234653285309,
+      "100.0": 0.6029234925443492,
+      "200.0": 0.5931075999236887,
+      "400.0": 0.5827394723376148,
+      "800.0": 0.5718339729190066
+    },
+    "growth_auc_by_dose": {
+      "0.0": 15.128683769565741,
+      "100.0": 14.442289166934463,
+      "200.0": 14.206710997733996,
+      "400.0": 13.957880898679786,
+      "800.0": 13.696156426574873
+    },
+    "inhibition_by_dose": {
+      "0.0": 0.0,
+      "100.0": 0.964310860762955,
+      "200.0": 0.9870839971236822,
+      "400.0": 0.9953950543677521,
+      "800.0": 0.9983670447930795
+    },
+    "cmax_by_dose": {
+      "0.0": 0.0,
+      "100.0": 4.502191814150233,
+      "200.0": 9.004383628300467,
+      "400.0": 18.008767256600933,
+      "800.0": 36.017534513201866
+    },
+    "c_max_mg_per_l": 18.008767256600933,
+    "conc_auc_mg_h_per_l": 47.094932949533685,
+    "formal_lemmas_verified": 10
+  }
+}

@@ -1,0 +1,240 @@
+{
+  "schema": "drift-veritrial-integration-provenance/2",
+  "merkle_root": "33b2418f1ed9bc6209437c125a85c8792e5f02d50c9933774e06ee77be64e8af",
+  "tether_ledger_merkle_root": "427891ed29ee398a81647819d3cbd293ff202e6944ddd9bb2a29e212283074c6",
+  "tether_ledger": {
+    "ledger_available": true,
+    "heads_match": {
+      "DRIFT": true,
+      "VeriTrial": true,
+      "QED": true,
+      "tether": true
+    },
+    "lean_digests_match": {
+      "QED/Compartmental.lean": true,
+      "QED/QED.lean": true,
+      "QED/VeriTrialExport.lean": true,
+      "QED/lakefile.lean": true
+    },
+    "ledger_merkle_root": "427891ed29ee398a81647819d3cbd293ff202e6944ddd9bb2a29e212283074c6"
+  },
+  "repos": {
+    "DRIFT": {
+      "sha": "370221bbcced4f0faaf981c90f7f2c5585f3f754",
+      "sha_source": "git",
+      "dirty": true
+    },
+    "VeriTrial": {
+      "sha": "037bbc48bf20a4b0da42043012c3dd83a291f24a",
+      "sha_source": "git",
+      "dirty": true
+    },
+    "QED": {
+      "sha": "fce0e966fe4e5c1d2c3f87a28fc01f7b43f935da",
+      "sha_source": "git",
+      "dirty": true
+    },
+    "tether": {
+      "sha": "49616d08e430d8e2df192632c54cc61b113482b4",
+      "sha_source": "git",
+      "dirty": true
+    }
+  },
+  "lean_digests": {
+    "QED/Compartmental.lean": "5d1e846f851c192df0500b322a7bc9ec651f27befe4a81d6482195fc03942ad7",
+    "QED/QED.lean": "3f6d5ef1d675d8984cc366a4d4e6dd21677641a7e4d25f6f146c6375de279579",
+    "QED/VeriTrialExport.lean": "1560a468f655b639b5a51b1b7b4b3d3ec1c7b5275080fd6d64e82b9e74085232",
+    "QED/lakefile.lean": "7b583ce2d56e307aaefabdbf8bbc4c978d37da6e0093d709c9c5d37840195ef4"
+  },
+  "benchmark": {
+    "growth_by_dose": {
+      "0.0": 0.6315234653285309,
+      "100.0": 0.6029234925443492,
+      "200.0": 0.5931075999236887,
+      "400.0": 0.5827394723376148,
+      "800.0": 0.5718339729190066
+    },
+    "growth_auc_by_dose": {
+      "0.0": 15.128683769565741,
+      "100.0": 14.442289166934463,
+      "200.0": 14.206710997733996,
+      "400.0": 13.957880898679786,
+      "800.0": 13.696156426574873
+    },
+    "inhibition_by_dose": {
+      "0.0": 0.0,
+      "100.0": 0.964310860762955,
+      "200.0": 0.9870839971236822,
+      "400.0": 0.9953950543677521,
+      "800.0": 0.9983670447930795
+    },
+    "cmax_by_dose": {
+      "0.0": 0.0,
+      "100.0": 4.502191814150233,
+      "200.0": 9.004383628300467,
+      "400.0": 18.008767256600933,
+      "800.0": 36.017534513201866
+    },
+    "c_max_mg_per_l": 18.008767256600933,
+    "conc_auc_mg_h_per_l": 47.094932949533685,
+    "formal_lemmas_verified": 10
+  },
+  "drift_source_digest": "4ca4d81da65fccbb4b23bccc173087776ab4681eafa0066c7b36fadbd064355a",
+  "formal": {
+    "qed": "/Users/tom/Documents/apps/QED",
+    "verified": 10,
+    "skipped": 0,
+    "sorry": 0,
+    "families": {
+      "hill_bounds_and_monotonicity": [
+        "C_drug / (C_drug + Kd) + Kd / (C_drug + Kd) = 1",
+        "C_drug / (C_drug + Kd) >= 0",
+        "Kd / (C_drug + Kd) >= 0",
+        "1 - C_drug / (C_drug + Kd) >= 0",
+        "1 - Kd / (C_drug + Kd) >= 0",
+        "C_drug2 / (C_drug2 + Kd) - C_drug1 / (C_drug1 + Kd) = Kd * (C_drug2 - C_drug1) / ((C_drug1 + Kd) * (C_drug2 + Kd))"
+      ],
+      "flux_normalized_mapping": [
+        "C_flux * (Km + 1) / (Km + C_flux) = C_flux / (Km + C_flux) + C_flux * Km / (Km + C_flux)",
+        "C_flux * (Km + 1) / (Km + C_flux) * (Km + C_flux) = C_flux * (Km + 1)",
+        "C_flux * (Km + 1) / (Km + C_flux) / (Km + 1) = C_flux / (Km + C_flux)",
+        "Vmax * C_flux * (Km + 1) / (Km + C_flux) = Vmax * C_flux / (Km + C_flux) + Vmax * C_flux * Km / (Km + C_flux)"
+      ]
+    }
+  },
+  "integration": {
+    "dose_mg": 400.0,
+    "km": 0.5,
+    "hill": 1.5,
+    "cmax": 18.008767256600933,
+    "pmax": 18.008767256600933,
+    "inhibition_max": 0.9953950543677521,
+    "dose_ladder": [
+      {
+        "dose_mg": 0.0,
+        "cmax_mg_per_l": 0.0,
+        "conc_auc_mg_h_per_l": 0.0,
+        "inhibition_max": 0.0,
+        "mean_growth": 0.6315234653285309,
+        "growth_auc": 15.128683769565741,
+        "max_growth": 0.6662301800816123,
+        "cell_death": false
+      },
+      {
+        "dose_mg": 100.0,
+        "cmax_mg_per_l": 4.502191814150233,
+        "conc_auc_mg_h_per_l": 11.773733237383421,
+        "inhibition_max": 0.964310860762955,
+        "mean_growth": 0.6029234925443492,
+        "growth_auc": 14.442289166934463,
+        "max_growth": 0.6626354803127367,
+        "cell_death": false
+      },
+      {
+        "dose_mg": 200.0,
+        "cmax_mg_per_l": 9.004383628300467,
+        "conc_auc_mg_h_per_l": 23.547466474766843,
+        "inhibition_max": 0.9870839971236822,
+        "mean_growth": 0.5931075999236887,
+        "growth_auc": 14.206710997733996,
+        "max_growth": 0.6601933058141838,
+        "cell_death": false
+      },
+      {
+        "dose_mg": 400.0,
+        "cmax_mg_per_l": 18.008767256600933,
+        "conc_auc_mg_h_per_l": 47.094932949533685,
+        "inhibition_max": 0.9953950543677521,
+        "mean_growth": 0.5827394723376148,
+        "growth_auc": 13.957880898679786,
+        "max_growth": 0.6572705921534898,
+        "cell_death": false
+      },
+      {
+        "dose_mg": 800.0,
+        "cmax_mg_per_l": 36.017534513201866,
+        "conc_auc_mg_h_per_l": 94.18986589906737,
+        "inhibition_max": 0.9983670447930795,
+        "mean_growth": 0.5718339729190066,
+        "growth_auc": 13.696156426574873,
+        "max_growth": 0.6559332313511762,
+        "cell_death": false
+      }
+    ],
+    "cell_death": {
+      "infeasible": {
+        "demand": 5.0,
+        "constraints": {
+          "EX_glc__D_e": -5.5,
+          "Biomass_Ecoli_core": 5.0
+        },
+        "lp_status": "infeasible",
+        "lp_objective": 0.0,
+        "lp_bottlenecks": {
+          "EX_glc__D_e": -5.5,
+          "Biomass_Ecoli_core": 5.0
+        },
+        "lp_diagnostic": "Potential bottlenecks: Biomass_Ecoli_core (LB: 5.00)",
+        "cell_death": true,
+        "death_step": 0,
+        "death_cause": "Potential bottlenecks: Biomass_Ecoli_core (LB: 5.00)",
+        "growth": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "statuses": [
+          "infeasible",
+          "dead",
+          "dead",
+          "dead"
+        ]
+      },
+      "feasible_control": {
+        "demand": 0.1,
+        "constraints": {
+          "EX_glc__D_e": -5.5,
+          "Biomass_Ecoli_core": 0.1
+        },
+        "lp_status": "optimal",
+        "lp_objective": 0.4614301482804588,
+        "lp_bottlenecks": {},
+        "lp_diagnostic": null,
+        "cell_death": false,
+        "death_step": null,
+        "death_cause": null,
+        "growth": [
+          0.46260688221989466,
+          0.4655039709265498,
+          0.4679599664829126,
+          0.4705783790712771
+        ],
+        "statuses": [
+          "optimal",
+          "optimal",
+          "optimal",
+          "optimal"
+        ]
+      }
+    },
+    "formal_gate": {
+      "qed": "/Users/tom/Documents/apps/QED",
+      "verified": 10,
+      "skipped": 0,
+      "sorry": 0,
+      "lemmas": [
+        "C_drug / (C_drug + Kd) + Kd / (C_drug + Kd) = 1",
+        "C_drug / (C_drug + Kd) >= 0",
+        "Kd / (C_drug + Kd) >= 0",
+        "1 - C_drug / (C_drug + Kd) >= 0",
+        "1 - Kd / (C_drug + Kd) >= 0",
+        "C_drug2 / (C_drug2 + Kd) - C_drug1 / (C_drug1 + Kd) = Kd * (C_drug2 - C_drug1) / ((C_drug1 + Kd) * (C_drug2 + Kd))",
+        "C_flux * (Km + 1) / (Km + C_flux) = C_flux / (Km + C_flux) + C_flux * Km / (Km + C_flux)",
+        "C_flux * (Km + 1) / (Km + C_flux) * (Km + C_flux) = C_flux * (Km + 1)",
+        "C_flux * (Km + 1) / (Km + C_flux) / (Km + 1) = C_flux / (Km + C_flux)",
+        "Vmax * C_flux * (Km + 1) / (Km + C_flux) = Vmax * C_flux / (Km + C_flux) + Vmax * C_flux * Km / (Km + C_flux)"
+      ]
+    }
+  }
+}

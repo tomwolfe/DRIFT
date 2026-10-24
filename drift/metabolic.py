@@ -140,6 +140,39 @@ class ProxyMode(Enum):
     LOOKUP_TABLE = "lookup_table"
 
 
+def constraint_bound(map_config: Dict[str, Any], base_vmax: float,
+                     scaling: float) -> float:
+    """The lower bound a mapping contributes to its reaction.
+
+    Two kinds of constraint are supported, selected by the mapping's
+    ``constraint_kind`` key:
+
+    ``capacity`` (the default, and the historical behaviour): the mapping
+    CAPS the reaction's capacity.  For a COBRA exchange reaction the
+    bound is ``-(base_vmax * scaling)`` -- a negative bound that limits
+    the uptake.
+
+    ``requirement``: the mapping states a DEMAND the reaction must
+    carry.  The bound is ``+(base_vmax * scaling)`` -- a positive bound
+    the flux has to reach.  A demand above what the network can produce
+    makes the LP INFEASIBLE, which is how a metabolic problem reports
+    that the cell cannot sustain itself.
+
+    An unknown kind is refused rather than silently treated as a
+    capacity: a typo must not turn a demand into a cap.
+    """
+    kind = str(map_config.get("constraint_kind", "capacity")).strip().lower()
+    if kind == "capacity":
+        return -(base_vmax * scaling)
+    if kind == "requirement":
+        return +(base_vmax * scaling)
+    raise ValueError(
+        f"unknown constraint_kind {kind!r} for reaction "
+        f"{map_config.get('reaction_id')!r}: expected 'capacity' or "
+        "'requirement'."
+    )
+
+
 class MetabolicBridge:
     """Maps signaling protein concentrations to metabolic Vmax constraints."""
 
@@ -475,7 +508,7 @@ class MetabolicBridge:
                 else:
                     scaling = (basal + max_s) - max_s * protein_level
 
-            constraints[rxn_id] = -(base_vmax * scaling)
+            constraints[rxn_id] = constraint_bound(map_config, base_vmax, scaling)
             scalings[rxn_id] = scaling
 
         return constraints, scalings
@@ -549,8 +582,10 @@ class MetabolicBridge:
                 else:
                     scaling = (basal + max_s) - max_s * protein_level
 
-            # COBRA exchange reactions: Flux > -UB (uptake)
-            constraints[rxn_id] = -(base_vmax * scaling)
+            # COBRA exchange reactions: Flux > -UB (uptake).  A mapping
+            # with constraint_kind "requirement" states the demand the
+            # reaction must carry instead of the capacity it may use.
+            constraints[rxn_id] = constraint_bound(map_config, base_vmax, scaling)
 
         return constraints
 

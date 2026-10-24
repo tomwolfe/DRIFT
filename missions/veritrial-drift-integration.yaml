@@ -1,0 +1,107 @@
+mission:
+  name: veritrial-drift-integration
+  goal: |
+    Prove the two engines are ONE trial: VeriTrial's PK -> DRIFT's PD and
+    metabolism, end to end, with the formal layer in the loop.
+
+    VeriTrial is the SAD/MAD engine: it owns the concentration-time profile
+    and the regulatory summaries.  DRIFT is the PD/metabolic engine: it owns
+    the target occupancy, the stochastic signaling network, the metabolic
+    constraints and the growth readout.  The seam between them is the
+    plasma concentration:
+
+        VeriTrial PBPK --(C_p(t))--> DRIFT Hill binding
+                        --(inhibition(t))--> stochastic signaling
+                        --(state)--> metabolic bridge
+                        --(constraints)--> FBA --> growth / cell death
+
+    WHAT IS ASSERTED, AND HOW:
+
+      * the inhibition is monotone in the concentration, measured on the
+        real C_p(t) profile of a 400 mg moxifloxacin dose (the Hill
+        occupancy is increasing, so the sorted profile has a sorted
+        inhibition) -- MEASURED, not asserted in prose;
+      * the growth readout is monotone in the dose, measured end to end
+        through the engine: more drug means less growth;
+      * the cell_death flag is reachable: an INFEASIBLE metabolic problem
+        (not a hand-set flag) must make the engine notice and set it;
+      * the provenance file chains the FOUR repository SHAs, the Lean
+        artefact digests and a benchmark summary;
+      * the formal layer still verifies through QED: the Hill bounds, the
+        flux bounds and the monotonicity algebra, in the same run.
+
+    The script fails closed: any failed assertion exits non-zero, and the
+    mission fails with it.
+context:
+  - "VeriTrial builds the PBPK parameters from the drug configuration (configs/drug_moxifloxacin.yaml: ec50 0.5 mg/L, hill_coeff 1.5, bioavailability 0.89) and solves the central-compartment profile with the Metzler-bounded fixed-step solver."
+  - "DRIFT's BindingEngine implements the Hill occupancy theta = C^n / (C^n + Kd^n); the inhibition series is that occupancy evaluated along the C_p(t) profile."
+  - "DRIFT's SimulationEngine runs the predictor-corrector loop: signaling sub-steps -> metabolic bridge -> FBA; a non-optimal FBA status sets cell_death and zeroes the growth.  It is driven either by a scalar concentration or by a concentration-TIME PROFILE (drug_profile plus drug_profile_times), in which case each step reads the plasma concentration at its own time -- that is the seam between the two engines."
+  - "DRIFT's MetabolicBridge maps a signaling protein to a metabolic bound: a capacity mapping caps the reaction (the historical negative lower bound), a requirement mapping states a DEMAND the reaction must carry (a positive lower bound).  A demand above what the network can produce makes the LP infeasible, and the engine then sets cell_death on the solver's own verdict."
+  - "QED's statement language has no hypothesis syntax: the sign premises are carried by the quotients' denominators, where the pipeline generates them. The formal gate therefore certifies the ALGEBRA of the Hill bounds, the flux bounds and the monotonicity difference identity."
+workspace_repos:
+  - "../QED"
+  - "../VeriTrial"
+  # The tether ledger is the cross-repo record of the four heads, so the
+  # fourth SHA and the Lean digests must be reachable in the clean room
+  # too -- hence the sibling copy below.
+  - "../tether"
+constraints:
+  - "Do NOT create any git commits. Leave every change in the working tree, uncommitted; this mission runs with git_state_guard: true."
+  - "Do NOT introduce sorry axioms in any QED output"
+  - "Do NOT weaken an assertion in the integration script to make it pass; fix the code or the model"
+  - "The cell-death flag must be reached by driving an infeasible metabolic problem, never by setting it"
+git_state_guard: true
+verification:
+  clean_room: true
+  clean_room_copy:
+    - "../QED"
+    - "../VeriTrial"
+    # The tether ledger carries the fourth head (and the Lean digests),
+    # so the provenance chain can be resolved in the clean room as well.
+    - "../tether"
+  mutation:
+    enabled: false
+  assertions:
+    # The provenance artefact is the chain the mission asks for: the four
+    # repository heads, the Lean digests and the benchmark summary.
+    - path: "output/regulatory_provenance.json"
+      contains: "drift-veritrial-integration-provenance/2"
+      min_occurrences: 1
+    - path: "output/regulatory_provenance.json"
+      matches: "\"sha\": \"[0-9a-f]{40}\""
+      min_occurrences: 1
+    - path: "output/regulatory_provenance.json"
+      contains: "\"lean_digests\""
+      min_occurrences: 1
+    - path: "output/regulatory_provenance.json"
+      contains: "\"benchmark\""
+      min_occurrences: 1
+  commands:
+    # 1. The end-to-end trial: PK -> binding -> signaling -> metabolism.
+    #    The script itself asserts the measured monotonicity, the
+    #    end-to-end dose monotonicity, the cell death reached through a
+    #    genuinely infeasible metabolic problem, and the formal layer
+    #    (the Hill bounds, the flux bounds and the monotonicity algebra)
+    #    verified through QED.
+    - "env PYTHONPATH=. python3 scripts/run_veritrial_drift_integration.py"
+    # 2. The formal layer, in the same run: the Hill bounds, the flux
+    #    bounds and the monotonicity algebra verified by QED.
+    - "env PYTHONPATH=. python3 scripts/export_drift_to_qed.py --out /tmp/drift_lemmas_integration.txt --parametric"
+    - "env PYTHONPATH=. python3 scripts/verify_drift_lemmas.py /tmp/drift_lemmas_integration.txt --strict"
+    # 3. The components' own suites.
+    - "env PYTHONPATH=. python3 -m pytest tests/ -q -p no:cacheprovider"
+  timeout_seconds: 5400
+review:
+  enabled: true
+  required: true
+  adapter: opencode
+  retry_on_rejection: true
+recovery:
+  max_attempts: 1
+adapter: opencode
+adapters:
+  opencode:
+    command: ["opencode", "run", "--auto", "-m", "opencode/beam-free", "{prompt}"]
+    timeout_seconds: 7200
+budget:
+  max_wall_seconds: 14400

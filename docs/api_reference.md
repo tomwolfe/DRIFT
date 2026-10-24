@@ -173,6 +173,33 @@ Performs one integration step.
 **Raises:**
 - `ValueError`: If parameters are invalid
 
+### SimulationEngine
+
+Runs the multi-scale loop: signaling sub-steps -> metabolic bridge -> FBA,
+with the predictor-corrector refinement.
+
+#### `SimulationEngine.run(steps, drug_concentration=None, sub_steps=5, refine_feedback=False, custom_params=None, seed=None, drug_profile=None, drug_profile_times=None)`
+
+Runs the simulation loop.
+
+**Parameters:**
+- `steps` (int): Number of simulation steps
+- `drug_concentration` (float, optional): Concentration of the drug, applied to every step
+- `sub_steps` (int): Signaling sub-steps per simulation step
+- `refine_feedback` (bool): Re-run signaling with the metabolic feedback of the solved fluxes
+- `custom_params` (dict, optional): Overrides for the signaling parameters
+- `seed` (int, optional): Seed for the integrator and the Numba generator
+- `drug_profile` (array-like, optional): The plasma concentration PROFILE of the trial (for example VeriTrial's PBPK output).  When given, each step reads the concentration at its own time and derives the inhibition from it -- this is the seam between a PK engine and this PD/metabolic engine.  Without it, `drug_profile_times` defaults to the engine's own time grid.
+- `drug_profile_times` (array-like, optional): The times (h) of `drug_profile`; must have the same length and be non-decreasing
+
+Exactly one of `drug_concentration` and `drug_profile` must be given.
+
+**Returns:**
+- `dict`: The simulation history -- `time`, `signaling`, `growth`, `status`, `cell_death`, `death_step`, `death_cause`, `inhibition` (the peak inhibition of the run), `concentration` (the exposure of every step), `inhibition_series`, `drug_kd`, `params`, `headless`, `species_names`, `audit_log`
+
+**Raises:**
+- `ValueError`: If neither a concentration nor a profile is given, or if the profile is malformed
+
 ### MetabolicBridge
 
 Maps signaling states to metabolic constraints.
@@ -182,7 +209,11 @@ Maps signaling states to metabolic constraints.
 Initializes the metabolic bridge.
 
 **Parameters:**
-- `mappings` (list, optional): Custom mappings from signaling proteins to metabolic reactions
+- `mappings` (list, optional): Custom mappings from signaling proteins to metabolic reactions.  Each mapping carries `reaction_id`, `base_vmax` and the scaling keys; its optional `constraint_kind` selects what the bound means:
+  - `capacity` (the default): the mapping CAPS the reaction -- the lower bound is `-(base_vmax * scaling)`, a negative bound that limits an uptake.
+  - `requirement`: the mapping states a DEMAND the reaction must carry -- the lower bound is `+(base_vmax * scaling)`.  A demand above what the network can produce makes the LP infeasible, and the engine then reports `cell_death` on the solver's own verdict.
+
+  An unknown `constraint_kind` raises `ValueError`: a typo must not turn a demand into a cap.
 
 #### `MetabolicBridge.get_constraints(signaling_state)`
 

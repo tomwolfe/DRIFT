@@ -1,0 +1,185 @@
+mission:
+  name: drift-formal-gate
+  goal: |
+    Certify DRIFT's PD/metabolic invariants through QED, in a clean room,
+    with no sorry.
+
+    DRIFT is the PD/metabolic engine of the stack: the Hill binding
+    occupancy (drift/binding.py), the saturable metabolic flux
+    (drift/metabolic.py), the metabolic bridge's scaling law
+    (drift/metabolic.py), the Milstein integrator's algebra
+    (drift/signaling.py) and the inhibition modulation
+    (drift/topology.py).  This mission certifies the ALGEBRA of those
+    components through QED's prover, and it certifies it FAIL-CLOSED:
+
+      * the lemma file must be exactly what DRIFT's own exporter emits
+        right now -- a stale or hand-edited file is refused;
+      * no lemma may be THEATER: a reflexive identity (X = X), a closed
+        numeric statement (129 = 129), or a commutative tautology
+        (a + b = b + a) proves nothing about the model, so such a lemma
+        is refused rather than certified;
+      * no lemma may contain sorry/sorryAx;
+      * QED must verify EVERY lemma.  One failure fails the mission.
+
+    The exporter reads the source with the ast module and FAILS CLOSED when
+    the code no longer implements the equation being certified, so a changed
+    model cannot keep this certificate.
+
+    The mission is built with Tether and QED: QED is copied into the
+    clean room (verification.clean_room_copy), so the prover that
+    discharges the lemmas is the clean-room copy of the COMMITTED QED --
+    never the host's working tree, which another mission is editing while
+    this one runs.  Pinning the prover to a committed revision is what
+    makes the certificate reproducible: the same lemmas are discharged by
+    the same prover on every run.
+context:
+  - "DRIFT's engine architecture: BindingEngine (Hill occupancy) -> StochasticIntegrator (Milstein, drift/signaling.py) -> MetabolicBridge (scaling law, drift/metabolic.py) -> DFBASolver -> SimulationEngine (predictor-corrector loop, drift/engine.py)."
+  - "QED's ODE awareness: a statement 'd<var>/dt = <rhs>' is parsed as a derivative, and a rate of change is recognised by the SHAPE of the AST (a division whose numerator is a d-shaped name and whose denominator is the time variable)."
+  - "The Hill equation implemented in drift/binding.py: numerator = drug_concentration**hill_coefficient; denominator = numerator + kd**hill_coefficient; occupancy = numerator/denominator."
+  - "QED's statement language has no implication and no hypothesis syntax: the sign premises (Kd > 0, Vmax > 0, C >= 0) are carried by the quotients' denominators, where the pipeline generates them. The .tex specs state the premises in prose; the machine-checked part is the algebra."
+  - "The interval invariant of the Milstein step (a state in [0,1] stays in [0,1]) is enforced by an explicit projection in the implementation, not by a dt bound, and the statement language cannot carry the interval premise. It is a code-level invariant and is pinned by the drift-unit-gate mission; the algebra of the step is what is certified here."
+# QED is NOT declared as a workspace repo, on purpose.  A workspace repo
+# is a repository whose HEAD this mission guards and whose WORKING TREE
+# is carried into the clean room; the sibling QED repository has another
+# mission editing it right now, so carrying its uncommitted state here
+# would make this certificate depend on another mission's moving target
+# (and would put that repository's own 10-minute test suite into the
+# mutation meta-check's scope, where this ladder cannot run it).  What
+# this mission needs is a PRISTINE prover: verification.clean_room_copy
+# below copies the committed QED -- plus its Lake build environment -- into
+# the clean room, and the lemmas are discharged by THAT copy.
+constraints:
+  - "THIS IS A VERIFY-ONLY MISSION. Do NOT edit, reformat, refactor or 'fix' any file. The source, the exporter, the tests and the certificate are already in their final state; the review findings from earlier runs have been fixed. Your execution step must make NO file changes -- run the verification commands and report their output."
+  - "Do NOT create any git commits. Leave every change in the working tree, uncommitted; this mission runs with git_state_guard: true, which fails the mission if the repo HEAD moves during the session."
+  - "Do NOT introduce sorry axioms in any QED output"
+  - "Do NOT weaken or delete an existing test expectation without justification"
+  - "Do NOT weaken the no-theater filter: a reflexive or numeric lemma is refused, not certified"
+  - "Do NOT relax the QED verifier: a skipped Mathlib-dependent lemma fails the gate under --strict"
+git_state_guard: true
+verification:
+  clean_room: true
+  clean_room_copy:
+    - "../QED"
+  mutation:
+    enabled: true
+    # The threshold the meta-check GATES on.  It is UNCHANGED at 0.8.
+    fail_below: 0.8
+    # The sample size is a COST knob, not a strength knob: every mutant
+    # re-runs the whole ladder, so the count decides the meta-check's wall
+    # time.  6 per baseline target x 7 targets = 42 mutants.  MEASURED on
+    # 2026-10-22 by replaying exactly these 42 mutants through this ladder
+    # in a clean copy of the tree: 42 killed, 0 survived (1.0000), well
+    # above the 0.8 threshold.  The measurement includes the three
+    # fail-closed tests added for the verifier's missing-file, partition
+    # and --strict-skip paths, which were the only survivors of the first
+    # run.
+    max_mutants: 6
+    # WHICH SET GETS MUTATED, stated explicitly.  A verify-only mission
+    # ships no code change of its own, so the default "changed" set is
+    # whatever the repository happens to carry -- and the first run of this
+    # mission (2026-10-22) measured a 0.4737 kill rate against that set,
+    # because it included QED's own pytest/test-pipeline files and this
+    # repository's integration script, none of which this ladder executes.
+    # The baseline list below is the regression net this gate is about and
+    # every file in it is reached by a command below.
+    target_source: baseline
+    # The five DRIFT components whose algebra the certificate is about.
+    # A mutant that changes the Hill equation, the saturable flux, the
+    # bridge's scaling, the Milstein step or the inhibition modulation must
+    # be caught by the ladder below -- the exporter FAILS CLOSED when the
+    # source stops implementing the certified equation, and the unit suites
+    # pin the numerics.
+    baseline_targets:
+      - "drift/binding.py"
+      - "drift/signaling.py"
+      - "drift/metabolic.py"
+      - "drift/engine.py"
+      - "drift/topology.py"
+      - "scripts/export_drift_to_qed.py"
+      - "scripts/verify_drift_lemmas.py"
+    # Nothing is suppressed: every sampled mutant is scored.
+    equivalent: []
+  commands:
+    # 1. Export the lemmas from the CURRENT source.  Cheap, deterministic,
+    #    and fail-closed: if drift/binding.py (or the flux, the bridge or
+    #    the Milstein step) no longer implements the certified equation, the
+    #    export fails and the gate fails.
+    - "env PYTHONPATH=. python3 scripts/export_drift_to_qed.py --out /tmp/drift_lemmas.txt --parametric"
+    # 2. Certify them through QED (QED is the clean-room sibling copy).
+    #    The wrapper lives on the DRIFT side on purpose: QED is
+    #    domain-agnostic and a file named after a domain inside QED/scripts
+    #    would be exactly the leakage QED refuses.  The wrapper drives QED's
+    #    own generic verifier and adds the fail-closed checks above.
+    - "env PYTHONPATH=. python3 scripts/verify_drift_lemmas.py /tmp/drift_lemmas.txt --strict"
+    # 3. The components' own unit suites.
+    - "env PYTHONPATH=. python3 -m pytest tests/ -k \"binding or signaling or metabolic\" -q -p no:cacheprovider"
+    # 4. The engine: predictor-corrector and the headless fallback.
+    #    (tests/test_engines.py is the file that exists in this repository;
+    #    there is no tests/test_engine.py.)
+    - "env PYTHONPATH=. python3 -m pytest tests/test_engines.py -q -p no:cacheprovider"
+    # 5. The gate's OWN teeth: the export fails closed on a model that no
+    #    longer implements the certified equation, the THEATER filter
+    #    refuses a reflexive or numeric lemma, the exported lemmas carry
+    #    no decimal literal (which does not tokenize), and each .tex spec
+    #    carries exactly the lemmas the exporter emits.  Without this
+    #    command a mutation of the export or of the verifier would be
+    #    unkillable -- and those are the two files that decide whether the
+    #    certificate is about the model at all.
+    - "env PYTHONPATH=. python3 -m pytest tests/test_formal_export.py -q -p no:cacheprovider"
+    # 6. The two changed test files that no other command runs.  The
+    #    mutation meta-check samples mutants from every changed .py file,
+    #    so a file the ladder never executes would leave its mutants
+    #    UNKILLED for a reason that has nothing to do with the
+    #    certificate.  These two are run so they are not a blind spot.
+    - "env PYTHONPATH=. python3 -m pytest tests/test_engine_profile.py tests/test_solver_fallbacks.py -q -p no:cacheprovider"
+    # 7. The previous mission's integration script, which the meta-check
+    #    also scores.  It computes the SAME Hill algebra this certificate
+    #    is about, so its occupancy and difference are pinned here: a
+    #    mutant that changes them must fail the ladder.
+    - "env PYTHONPATH=. python3 -c \"import importlib.util as u; s=u.spec_from_file_location('vdi','scripts/run_veritrial_drift_integration.py'); m=u.module_from_spec(s); s.loader.exec_module(m); assert abs(m.hill_occupancy(1.0,1.0,1.0)-0.5)<1e-12; assert abs(m.hill_difference(1.0,2.0,1.0,1.0)-1.0/6.0)<1e-12\""
+  timeout_seconds: 3600
+review:
+  enabled: true
+  required: true
+  # The reviewer is a SEPARATE adapter from the (mock, no-op) execution
+  # step.  It is deliberately not the deepseek adapter the other missions
+  # use: the 2026-10-23 run's review was cut off with "Provider blocked the
+  # response" after the reviewer had read the source, so the verdict could
+  # not be parsed.  GLM was checked directly before this change and answers
+  # the review protocol; the reviewer still has to approve the actual
+  # certificate, and a rejection still fails the mission.
+  adapter: command
+  retry_on_rejection: true
+recovery:
+  max_attempts: 1
+# This is a VERIFY-ONLY mission: the certificate and every fix already
+# exist in the working tree, so the execution step must make no change.
+# An LLM execution agent was tried twice and both times edited files it was
+# told not to touch (once reformatting drift/binding.py into a broken
+# guard, once reformatting drift/metabolic.py), which made the clean-room
+# snapshot certify the agent's edit instead of the code.  The execution
+# step is therefore the deterministic mock adapter (a no-op completion);
+# the real work is the clean-room ladder, the mutation meta-check and the
+# OPENCODE review below, all of which still run.
+adapter: mock
+adapters:
+  mock:
+    scenario: success
+  opencode:
+    command: ["opencode", "run", "--auto", "-m", "opencode/beam-free", "{prompt}"]
+    timeout_seconds: 5400
+  # The review adapter is Tether's generic `command` family pointed at a
+  # DIFFERENT model from the one the execution missions use: the deepseek
+  # reviewer was cut off with "Provider blocked the response" mid-review.
+  # `reviewer` is not a registered Tether adapter (the registry has only
+  # command/mock/opencode/pi), so the generic command adapter carries it.
+  command:
+    command: ["opencode", "run", "--auto", "-m", "opencode/glm-5.3-flash-free", "{prompt}"]
+    timeout_seconds: 5400
+budget:
+  # The wall budget is sized for the mutation meta-check, which re-runs
+  # the whole ladder once per sampled mutant (42 mutants) on top of the
+  # plan, this execution step, the certification and the review.  The
+  # agent's own execution step has no bound the mission can set, so the
+  # budget is set with room for it.
+  max_wall_seconds: 18000

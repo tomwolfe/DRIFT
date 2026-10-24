@@ -4,6 +4,8 @@ import logging
 from drift.binding import BindingEngine
 from drift.signaling import StochasticIntegrator
 from drift.metabolic import MetabolicBridge, DFBASolver
+from drift.engine import SimulationEngine
+from drift.topology import get_default_topology
 
 # Suppress noisy INFO logs from external libraries
 logging.getLogger("cobra").setLevel(logging.WARNING)
@@ -145,5 +147,22 @@ class TestMetabolic(unittest.TestCase):
             solver.solve_step("invalid")  # Wrong type
 
 
+def test_the_engine_records_the_step_times():
+    """The recorded time vector is the step times: t_k = k * dt.
+
+    The history is what a reader (and the regulatory provenance) reads, so
+    the times it carries are part of the engine's contract.
+    """
+    dt = 0.05
+    integrator = StochasticIntegrator(dt=dt, noise_scale=0.01,
+                                       topology=get_default_topology())
+    solver = DFBASolver(model_name="textbook")
+    engine = SimulationEngine(integrator, solver, MetabolicBridge(),
+                               BindingEngine(kd=0.5))
+    history = engine.run(steps=5, drug_concentration=0.0, seed=3)
+    assert np.allclose(history["time"], np.arange(5) * dt)
+
+
 if __name__ == "__main__":
     unittest.main()
+
