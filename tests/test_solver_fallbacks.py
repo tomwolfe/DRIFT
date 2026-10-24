@@ -170,16 +170,16 @@ def test_a_solver_makes_the_engine_non_headless() -> None:
     test is skipped WITH A REASON rather than passing vacuously.
     """
     installed = [name.lower() for name in _installed_solvers()]
-    if "glpk" not in installed:
-        pytest.skip(f"GLPK is not installed in this environment "
-                    f"(measured solvers: {installed or 'none'})")
+    if not installed:
+        pytest.skip(f"no solver installed (measured: {installed or 'none'})")
+    target = installed[0]
     solver = DFBASolver(model_name="textbook")
-    assert "glpk" in [name.lower() for name in solver.available_solvers]
+    assert target in [name.lower() for name in solver.available_solvers]
     assert solver.headless is False
     assert solver.model is not None, "a solver is available but no model was bound"
     interface = solver.model.solver.interface.__name__.lower()
-    assert "glpk" in interface, (
-        f"the model is bound to {interface}, not the measured GLPK solver")
+    assert target in interface, (
+        f"the model is bound to {interface}, not the measured {target} solver")
 
 
 def test_strict_mode_runs_when_a_solver_is_available() -> None:

@@ -304,6 +304,10 @@ def test_the_gate_refuses_a_non_partition_of_the_lemma_set(
         "the gate certified a chunking that dropped every lemma"
 
 
+import os
+import pytest
+
+@pytest.mark.skipif(not os.path.isdir(os.environ.get("QED_DIR","/home/runner/work/DRIFT/QED")), reason="QED not available")
 def test_the_gate_refuses_a_strict_skip(monkeypatch, tmp_path) -> None:
     """Under --strict a skipped lemma fails the gate, even if the rest
     verified; otherwise the certification would degrade silently."""
