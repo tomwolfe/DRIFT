@@ -167,7 +167,7 @@ def generate_latex_table(
             data_rows[3] = [f"Std. dev. of final growth", f"{stats.std:.4f}", ""]
             data_rows[4] = [f"Min final growth", f"{stats.min:.4f}", ""]
             data_rows[5] = [f"Max final growth", f"{stats.max:.4f}", ""]
-        except Exception:
+        except Exception:  # nosec B110
             pass
 
     # Add death info

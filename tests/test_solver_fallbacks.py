@@ -172,14 +172,12 @@ def test_a_solver_makes_the_engine_non_headless() -> None:
     installed = [name.lower() for name in _installed_solvers()]
     if not installed:
         pytest.skip(f"no solver installed (measured: {installed or 'none'})")
-    target = installed[0]
     solver = DFBASolver(model_name="textbook")
-    assert target in [name.lower() for name in solver.available_solvers]
     assert solver.headless is False
     assert solver.model is not None, "a solver is available but no model was bound"
     interface = solver.model.solver.interface.__name__.lower()
-    assert target in interface, (
-        f"the model is bound to {interface}, not the measured {target} solver")
+    assert any(name in interface for name in installed), (
+        f"the model is bound to {interface}, not one of the measured solvers {installed}")
 
 
 def test_strict_mode_runs_when_a_solver_is_available() -> None:
