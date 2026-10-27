@@ -52,5 +52,31 @@ class TestSimulationEngine(unittest.TestCase):
         history = self.engine.run(steps=10, drug_concentration=100.0) # High drug might cause death if Kd is low
         self.assertIn("cell_death", history)
 
+    def test_time_varying_callable_concentration(self):
+        """A callable C(t) is evaluated per step, not treated as a constant."""
+        steps = 8
+        history = self.engine.run(
+            steps=steps, drug_concentration=lambda t: 1.0 + 0.5 * np.sin(t))
+        self.assertEqual(history["concentration_source"], "callable")
+        self.assertEqual(len(history["growth"]), steps)
+        sources = [
+            event["metadata"].get("source")
+            for event in history["audit_log"]
+            if event["component"] == "Drug Concentration"
+        ]
+        self.assertEqual(sources, ["callable"])
+
+    def test_time_varying_array_concentration(self):
+        """An ndarray trace is interpolated and reported as such."""
+        steps = 8
+        trace = 1.0 + 0.25 * np.cos(np.arange(steps))
+        history = self.engine.run(steps=steps, drug_concentration=trace)
+        self.assertEqual(history["concentration_source"], "array_interp")
+        self.assertEqual(len(history["growth"]), steps)
+
+    def test_constant_concentration_is_legacy_path(self):
+        history = self.engine.run(steps=3, drug_concentration=1.0)
+        self.assertEqual(history["concentration_source"], "constant")
+
 if __name__ == "__main__":
     unittest.main()

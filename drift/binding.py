@@ -68,6 +68,43 @@ class BindingEngine:
         denominator = numerator + kd**self.hill_coefficient
         return float(numerator / denominator)
 
+    def calculate_occupancy_time_series(
+        self,
+        C_t_array: "np.ndarray",
+        target_name: str = "default",
+    ) -> "np.ndarray":
+        """Vectorized Hill occupancy for a time-varying concentration trace.
+
+        Parameters
+        ----------
+        C_t_array : array-like
+            Concentration at each simulation step (same unit as ``kd``).
+        target_name : str
+            Target species whose ``kd`` to use.
+
+        Returns
+        -------
+        numpy.ndarray
+            Fractional occupancy in ``[0, 1]``, same shape as ``C_t_array``.
+
+        Raises
+        ------
+        ValueError
+            If any concentration is negative (fail closed rather than clip).
+        """
+        import numpy as np
+
+        c = np.asarray(C_t_array, dtype=float)
+        if np.any(c < 0):
+            raise ValueError(
+                "drug_concentration must be non-negative at every time point"
+            )
+        kd = self.targets.get(target_name, self.kd)
+        n = self.hill_coefficient
+        numerator = np.power(c, n)
+        denominator = numerator + kd**n
+        return numerator / denominator
+
     def calculate_inhibition(self, drug_concentration: float) -> Union[float, Dict[str, float]]:
         """
         Returns inhibition percentage [0.0, 1.0] for all targets.

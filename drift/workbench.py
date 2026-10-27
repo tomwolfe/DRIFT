@@ -279,6 +279,119 @@ class Workbench:
         self.sub_steps = sub_steps
         self.refine_feedback = refine_feedback
 
+    @classmethod
+    def from_veritrial(
+        cls,
+        trial_result: Any,
+        patient_idx: int = 0,
+        interpolator: Optional[Any] = None,
+        *,
+        steps: int = 100,
+        n_sims: Optional[int] = None,
+        run_kwargs: Optional[Dict[str, Any]] = None,
+        **workbench_kwargs: Any,
+    ) -> Union["Workbench", Dict[str, Any]]:
+        """Build a Workbench driven by a VeriTrial patient's C(t).
+
+        The concentration handed to the simulation is a **time-varying
+        trace**, not a scalar placeholder.  Two input shapes are accepted:
+
+        1. ``trial_result`` is a :class:`~insilico_trial.trial.engine.TrialEngine`
+           (or any object exposing ``to_drift_input``).  The patient id is
+           resolved from ``patient_idx``; :meth:`to_drift_input` supplies
+           ``t_eval`` (hours) and ``C_p`` (mg/L).
+        2. ``trial_result`` is a mapping already containing
+           ``t_eval``/``C_p``/``interpolator`` (e.g. the dict returned by
+           ``TrialEngine.to_drift_input``).
+
+        An explicit ``interpolator`` overrides the one carried by the input.
+        The callable is sampled on ``steps`` points spanning the profile and
+        the resulting 1-D array is stored as ``drug_concentration``; the
+        engine linearly interpolates it at each metabolic step.  Sampling
+        (rather than storing the closure) keeps the run picklable for the
+        ``spawn`` process pool used by :meth:`run_monte_carlo`.
+
+        Parameters
+        ----------
+        trial_result : object or mapping
+            Trial engine (with ``to_drift_input``) or a drift-input mapping.
+        patient_idx : int
+            Index into the engine's population when resolving a patient id.
+        interpolator : callable, optional
+            C(t) -> mg/L override.
+        steps : int
+            Number of samples used to discretize C(t).
+        n_sims : int, optional
+            If given, immediately run :meth:`run_monte_carlo` with this many
+            simulations (with ``run_kwargs``) and return its result.
+            Otherwise the configured Workbench is returned.
+
+        Returns
+        -------
+        Workbench or dict
+            A Workbench whose ``drug_concentration`` is the C(t) trace, or
+            the Monte Carlo result when ``n_sims`` is provided.
+        """
+        payload: Optional[Dict[str, Any]] = None
+        if hasattr(trial_result, "to_drift_input"):
+            engine = trial_result
+            patient_id: Optional[str] = None
+            population = getattr(engine, "population", None)
+            patients = getattr(population, "patients", None) if population is not None else None
+            if patients and patient_idx < len(patients):
+                patient_id = patients[patient_idx].id
+            if patient_id is None:
+                profiles = getattr(engine, "_patient_profiles", {})
+                ids = list(profiles)
+                if patient_idx >= len(ids):
+                    raise IndexError(
+                        f"patient_idx {patient_idx} out of range for {len(ids)} profiles")
+                patient_id = ids[patient_idx]
+            payload = engine.to_drift_input(patient_id)
+        elif isinstance(trial_result, dict) and (
+            "interpolator" in trial_result or {"t_eval", "C_p"} <= set(trial_result)
+        ):
+            payload = dict(trial_result)
+        else:
+            raise TypeError(
+                "trial_result must expose to_drift_input() or be a mapping "
+                "with t_eval/C_p (and optionally interpolator)")
+
+        t_eval = np.asarray(payload["t_eval"], dtype=float)
+        c_p = np.asarray(payload["C_p"], dtype=float)
+        if interpolator is None:
+            interpolator = payload.get("interpolator")
+        if interpolator is None:
+            if not (t_eval.size and t_eval.size == c_p.size):
+                raise ValueError("t_eval and C_p must be non-empty and equal length")
+            interpolator = lambda t: np.interp(t, t_eval, c_p)
+
+        if steps <= 1:
+            raise ValueError(f"steps must be > 1 to sample C(t), got {steps}")
+        grid = np.linspace(float(t_eval[0]), float(t_eval[-1]), steps)
+        c_trace = np.asarray(interpolator(grid), dtype=float)
+        if c_trace.shape != (steps,):
+            c_trace = np.broadcast_to(c_trace, (steps,)).copy()
+        if np.any(c_trace < 0):
+            raise ValueError("C(t) must be non-negative over the sampled window")
+
+        workbench = cls(drug_concentration=float(c_trace[0]), **workbench_kwargs)
+        workbench.drug_concentration = c_trace
+        workbench.veritrial_input = {
+            "patient_id": payload.get("patient_id"),
+            "t_eval": t_eval,
+            "C_p": c_p,
+            "grid": grid,
+            "unit": payload.get("unit", "mg/L"),
+        }
+        workbench.veritrial_interpolator = interpolator
+
+        if n_sims is not None:
+            kwargs = dict(run_kwargs or {})
+            kwargs.setdefault("steps", steps)
+            return workbench.run_monte_carlo(n_sims=n_sims, **kwargs)
+        return workbench
+
     def get_basal_growth(self, steps: int = 100) -> float:
         """Calculates growth rate without any drug inhibition."""
         fingerprint = self.solver.get_fingerprint()

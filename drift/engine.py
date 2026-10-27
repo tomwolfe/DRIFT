@@ -1,6 +1,6 @@
 import numpy as np
 import logging
-from typing import Dict, Any, Optional, List, TypedDict, Union
+from typing import Callable, Dict, Any, Optional, List, TypedDict, Union
 from .binding import BindingEngine
 from .signaling import StochasticIntegrator
 from .metabolic import MetabolicBridge, DFBASolver
@@ -25,6 +25,7 @@ class SimulationResult(TypedDict):
     headless: bool
     species_names: List[str]
     audit_log: List[Dict[str, Any]]
+    concentration_source: str
 
 class SimulationEngine:
     """
@@ -52,7 +53,7 @@ class SimulationEngine:
     def run(
         self,
         steps: int,
-        drug_concentration: float,
+        drug_concentration: Union[float, Callable[[float], float], np.ndarray],
         sub_steps: int = 5,
         refine_feedback: bool = False,
         custom_params: Optional[Dict[str, float]] = None,
@@ -60,6 +61,16 @@ class SimulationEngine:
     ) -> SimulationResult:
         """
         Runs the simulation loop.
+
+        ``drug_concentration`` may be:
+          * a float -- the legacy constant-concentration path;
+          * a callable ``C(t)`` -- evaluated at every step time (hours);
+          * a 1-D ``numpy`` array -- linearly interpolated over the
+            simulation time grid (one sample per step, or any length).
+
+        All three paths produce the same schema; the audit log records which
+        one was used so a time-varying run is distinguishable from a float
+        placeholder.
         """
         if seed is not None:
             self.rng = get_rng(seed)
@@ -74,7 +85,26 @@ class SimulationEngine:
                 if p_name in custom_params:
                     self.integrator.base_params[i] = custom_params[p_name]
 
-        inhibition = self.binding.calculate_inhibition(drug_concentration)
+        # Resolve the concentration source once, then evaluate it per step.
+        if callable(drug_concentration):
+            concentration_source = "callable"
+            def _concentration_at(t: float) -> float:
+                return float(drug_concentration(t))
+        elif isinstance(drug_concentration, np.ndarray):
+            concentration_source = "array_interp"
+            trace = np.asarray(drug_concentration, dtype=float)
+            if trace.ndim != 1 or trace.size == 0:
+                raise ValueError("drug_concentration array must be 1-D and non-empty")
+            trace_times = np.arange(trace.size) * self.integrator.dt
+            def _concentration_at(t: float) -> float:
+                return float(np.interp(t, trace_times, trace))
+        else:
+            concentration_source = "constant"
+            constant_concentration = float(drug_concentration)
+            def _concentration_at(t: float) -> float:
+                return constant_concentration
+
+        inhibition = self.binding.calculate_inhibition(_concentration_at(0.0))
 
         # Calculate a representative inhibition for logging/history
         if isinstance(inhibition, dict):
@@ -98,6 +128,13 @@ class SimulationEngine:
         # Initialize audit log
         from .core.audit import SimulationAuditLog
         audit_log = SimulationAuditLog()
+        audit_log.log_event(
+            step=0,
+            component="Drug Concentration",
+            message=f"Concentration source: {concentration_source}",
+            severity=AuditSeverity.INFO,
+            metadata={"source": concentration_source},
+        )
         
         dt_small = self.integrator.dt / sub_steps
 
@@ -122,7 +159,8 @@ class SimulationEngine:
             "params": custom_params or {},
             "headless": self.solver.headless,
             "species_names": self.integrator.topology.species,
-            "audit_log": []  # Initialize empty audit log
+            "audit_log": [],  # Initialize empty audit log
+            "concentration_source": concentration_source,
         }
 
         signaling_hist = []
@@ -136,6 +174,10 @@ class SimulationEngine:
                 history["status"].append("dead")
                 continue
 
+            step_time = float(history["time"][step])
+            step_inhibition = self.binding.calculate_inhibition(
+                _concentration_at(step_time))
+
             state_old = state.copy()
             feedback_old = feedback.copy()
 
@@ -143,7 +185,7 @@ class SimulationEngine:
             for _ in range(sub_steps):
                 orig_dt = self.integrator.dt
                 self.integrator.dt = dt_small
-                state = self.integrator.step(state, inhibition, feedback=feedback)
+                state = self.integrator.step(state, step_inhibition, feedback=feedback)
                 self.integrator.dt = orig_dt
 
             # 2. Metabolic mapping (Signaling -> Metabolism)
@@ -181,7 +223,7 @@ class SimulationEngine:
                 for _ in range(sub_steps):
                     orig_dt = self.integrator.dt
                     self.integrator.dt = dt_small
-                    state = self.integrator.step(state, inhibition, feedback=avg_feedback)
+                    state = self.integrator.step(state, step_inhibition, feedback=avg_feedback)
                     self.integrator.dt = orig_dt
 
                 # Re-run FBA with corrected state

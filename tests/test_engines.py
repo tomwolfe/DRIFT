@@ -18,6 +18,19 @@ class TestBindingEngine(unittest.TestCase):
         self.assertEqual(be.calculate_occupancy(0), 0)
         self.assertGreater(be.calculate_occupancy(1.0), 0.5)
 
+    def test_occupancy_time_series_matches_scalar(self):
+        be = BindingEngine(kd=0.5, hill_coefficient=2.0)
+        concs = np.array([0.0, 0.25, 0.5, 2.0])
+        series = be.calculate_occupancy_time_series(concs)
+        scalar = [be.calculate_occupancy(float(c)) for c in concs]
+        np.testing.assert_allclose(series, scalar)
+        self.assertTrue(np.all((series >= 0) & (series <= 1)))
+
+    def test_occupancy_time_series_fails_closed_on_negative(self):
+        be = BindingEngine(kd=0.5)
+        with self.assertRaises(ValueError):
+            be.calculate_occupancy_time_series(np.array([0.0, -1.0]))
+
     def test_invalid_kd(self):
         """Test that invalid Kd values raise errors."""
         with self.assertRaises(ValueError):
