@@ -69,14 +69,25 @@ class TestSimulationEngine(unittest.TestCase):
     def test_time_varying_array_concentration(self):
         """An ndarray trace is interpolated and reported as such."""
         steps = 8
-        trace = 1.0 + 0.25 * np.cos(np.arange(steps))
+        trace = (1.0 + np.arange(steps)) * 0.5
         history = self.engine.run(steps=steps, drug_concentration=trace)
         self.assertEqual(history["concentration_source"], "array_interp")
         self.assertEqual(len(history["growth"]), steps)
+        # The logged inhibition is the Hill occupancy at the first trace
+        # sample (trace[0] == 0.5, Kd == 0.5 -> 0.5), pinning the trace
+        # values absolutely rather than relative to the trace variable.
+        self.assertAlmostEqual(history["inhibition"], 0.5)
 
     def test_constant_concentration_is_legacy_path(self):
         history = self.engine.run(steps=3, drug_concentration=1.0)
         self.assertEqual(history["concentration_source"], "constant")
+
+    def test_time_grid_matches_step_index_times_dt(self):
+        """history['time'] must equal arange(steps) * dt (no arithmetic drift)."""
+        steps = 6
+        history = self.engine.run(steps=steps, drug_concentration=1.0)
+        np.testing.assert_allclose(
+            history["time"], np.arange(steps) * self.integrator.dt)
 
 if __name__ == "__main__":
     unittest.main()

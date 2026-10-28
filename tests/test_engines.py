@@ -59,6 +59,34 @@ class TestBindingEngine(unittest.TestCase):
             be.calculate_inhibition(0.5), 0.5
         )  # Kd = conc => 50% inhibition
 
+    def test_calculate_inhibition_multi_target_returns_dict(self):
+        """Multi-target inhibition must return a per-target dict (not a scalar)."""
+        be = BindingEngine(targets={"a": 0.5, "b": 1.0})
+        res = be.calculate_inhibition(0.5)
+        self.assertIsInstance(res, dict)
+        self.assertEqual(set(res), {"a", "b"})
+        self.assertAlmostEqual(res["a"], 0.5)  # conc == Kd_a
+        self.assertAlmostEqual(res["b"], 0.5 / (0.5 + 1.0))
+        for v in res.values():
+            self.assertGreaterEqual(v, 0.0)
+            self.assertLessEqual(v, 1.0)
+
+    def test_export_drift_to_qed_main_returns_zero(self):
+        """export_drift_to_qed.main must return 0 so the CLI exits clean."""
+        import importlib.util
+        import tempfile
+        from pathlib import Path
+        script = Path(__file__).resolve().parent.parent / "scripts" / "export_drift_to_qed.py"
+        spec = importlib.util.spec_from_file_location("export_drift_to_qed", script)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "drift_lemmas.txt"
+            ret = mod.main(["--out", str(out)])
+            self.assertEqual(ret, 0)
+            self.assertTrue(out.is_file())
+            self.assertIn("hill_nonneg", out.read_text())
+
 
 class TestSignaling(unittest.TestCase):
     def test_step_shape(self):
