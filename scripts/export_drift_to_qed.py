@@ -65,6 +65,8 @@ def main(argv: list[str] | None = None) -> int:
                     help=f"output file (default: {DEFAULT_OUT})")
     ap.add_argument("--stdout", action="store_true",
                     help="print lemmas instead of writing a file")
+    ap.add_argument("--parametric", action="store_true",
+                    help="accepted for backward compat with the quad gate; lemmas are always parametric")
     args = ap.parse_args(argv)
 
     lines = build_lines()
