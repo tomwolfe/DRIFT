@@ -22,10 +22,15 @@ def main() -> int:
     c_p = 1.0 + 0.5 * np.sin(np.linspace(0.0, 2.0 * np.pi, 49))
     assert np.ptp(c_p) > 0.5, "test trace must actually vary"
 
+    # Fixed seed: the gate must be deterministic. The suppression assertion
+    # below compares n=2 Monte Carlo means against a single basal draw, so an
+    # unseeded run flakes whenever the noise draw outweighs the drug effect.
+    # Seeding changes no assertion and exercises the same time-varying path.
     wb = Workbench.from_veritrial(
         {"t_eval": t_eval, "C_p": c_p, "patient_id": "integration"},
         steps=60,
         model_name="textbook",
+        random_state=0,
     )
     if not hasattr(wb, "run_monte_carlo"):
         raise SystemExit("from_veritrial did not return a configured Workbench")
@@ -51,3 +56,8 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+else:
+    # Fail closed if the module is ever imported instead of run: without
+    # this, a broken __main__ guard would silently pass the gate by never
+    # executing the check.
+    raise SystemExit("verify_time_varying_bridge must be run as a script")
