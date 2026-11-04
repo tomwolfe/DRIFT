@@ -1,3 +1,5 @@
+import matplotlib
+matplotlib.use("Agg")
 import numpy as np
 import matplotlib.pyplot as plt
 from drift.workbench import Workbench
@@ -51,8 +53,11 @@ def run_scientific_validation():
     
     # 4. Global Sensitivity Analysis
     # Proving the model drivers
+    # n_jobs=2 (not all CPUs): same N=40 ensemble and statistics, but
+    # bounded spawn workers avoid OOM/swap hangs in constrained clean
+    # rooms where -1 (all CPUs) each reload the COBRA model + JAX.
     print("\n[*] Phase 3: Global Sensitivity Analysis")
-    gsa_results = wb.run_global_sensitivity_analysis(n_sims=40, steps=200)
+    gsa_results = wb.run_global_sensitivity_analysis(n_sims=40, steps=200, n_jobs=2)
     
     print("\n" + "="*60)
     print("VALIDATION SUMMARY")
